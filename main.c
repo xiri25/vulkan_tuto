@@ -1,7 +1,3 @@
-//#include <vulkan/vulkan.h>
-
-#include <vulkan/vulkan_core.h>
-    
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -48,6 +44,15 @@ bool checkValidationLayerSupport(const char** validationLayers, const uint32_t v
     return true;
 }
 
+void createSurface(VkInstance instance, GLFWwindow* window, VkSurfaceKHR* surface)
+{
+    if ( glfwCreateWindowSurface(instance, window, NULL, surface) != VK_SUCCESS )
+    {
+        printf("Failed to create window surface\n");
+        exit(7);
+    }
+}
+
 GLFWwindow* create_window(const uint32_t width, const uint32_t height)
 {
     glfwInit();
@@ -65,9 +70,11 @@ void main_loop(GLFWwindow* window)
     }
 }
 
-void cleanup(GLFWwindow* window, VkInstance instance, VkDevice device)
+void cleanup(GLFWwindow* window, VkInstance instance, VkDevice device, VkSurfaceKHR surface)
 {
     vkDestroyDevice(device, NULL);
+
+    vkDestroySurfaceKHR(instance, surface, NULL);
 
     vkDestroyInstance(instance, NULL);
 
@@ -123,9 +130,10 @@ void create_VkInstance(VkInstance* vk_instance, const char** validationLayers, c
 
 typedef struct QueueFamilyIndices {
     int32_t graphicsFamily; // We dont have optional, so negative means that is not found
+    int32_t presentFamily;
 } QueueFamilyIndices_t;
 
-QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device)
+QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface)
 {
     /* 
      * There are different types of queues
@@ -144,9 +152,11 @@ QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device)
      * for all the queue families we need.
     */
     QueueFamilyIndices_t indices = {
-        .graphicsFamily = -1
+        .graphicsFamily = -1,
+        .presentFamily = -1
     };
     
+    VkBool32 presentSupport = false;
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, NULL);
 
@@ -164,23 +174,28 @@ QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device)
 
     for (uint32_t i = 0; i < queueFamilyCount; i++)
     {
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
         if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
         {
             indices.graphicsFamily = i;
+        }
+        if (presentSupport)
+        {
+            indices.presentFamily = i;
         }
     }
 
     return indices;
 }
 
-bool isDeviceSuitable(VkPhysicalDevice device)
+bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface)
 {
     VkPhysicalDeviceProperties deviceProperties;
     VkPhysicalDeviceFeatures deviceFeatures;
     QueueFamilyIndices_t indices;
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
     vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-    indices = findQueueFamilies(device); // El tuto ahora solo hace esta comprobacion XD
+    indices = findQueueFamilies(device, surface); // El tuto ahora solo hace esta comprobacion XD
 
     return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
            deviceFeatures.geometryShader && indices.graphicsFamily > -1; // -1 porque el tuto usa optional
@@ -192,7 +207,7 @@ bool isDeviceSuitable(VkPhysicalDevice device)
      */
 }
 
-VkPhysicalDevice pickPhysicalDevice(VkInstance vk_instance)
+VkPhysicalDevice pickPhysicalDevice(VkInstance vk_instance, VkSurfaceKHR surface)
 {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
@@ -206,7 +221,7 @@ VkPhysicalDevice pickPhysicalDevice(VkInstance vk_instance)
     vkEnumeratePhysicalDevices(vk_instance, &deviceCount, devices);
     for (uint32_t i = 0; i < deviceCount; i++)
     {
-        if (isDeviceSuitable(devices[i]))
+        if (isDeviceSuitable(devices[i], surface))
         {
             physicalDevice = devices[i]; // Elige el primero que vale
             break;
@@ -223,25 +238,34 @@ VkPhysicalDevice pickPhysicalDevice(VkInstance vk_instance)
     return physicalDevice;
 }
 
-VkDevice createLogicalDevice(VkPhysicalDevice physicalDevice, VkQueue* graphicsQueue)
+VkDevice createLogicalDevice(VkPhysicalDevice physicalDevice, VkQueue* graphicsQueue, VkSurfaceKHR surface)
 {
     VkDevice device;
 
-    QueueFamilyIndices_t indices = findQueueFamilies(physicalDevice);
+    QueueFamilyIndices_t indices = findQueueFamilies(physicalDevice, surface);
 
-    VkDeviceQueueCreateInfo queueCreateInfo = {};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueFamilyIndex = indices.graphicsFamily;
-    queueCreateInfo.queueCount = 1;
+    uint32_t uniqueQueueFamilies[2] = {indices.graphicsFamily, indices.presentFamily};
+    uint32_t queueFamilyCount = (indices.graphicsFamily == indices.presentFamily) ? 1 : 2;
+
+    VkDeviceQueueCreateInfo queueCreateInfos[queueFamilyCount];
     float queuePriority = 1.0f;
-    queueCreateInfo.pQueuePriorities = &queuePriority;
+
+    /* I think this shit works XD */
+    for (uint32_t i = 0; i < queueFamilyCount; i++)
+    {
+        VkDeviceQueueCreateInfo queueCreateInfo = {};
+        queueCreateInfos[i] = queueCreateInfo;
+        queueCreateInfos[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfos[i].queueFamilyIndex = uniqueQueueFamilies[i];
+        queueCreateInfos[i].queueCount = 1;
+        queueCreateInfos[i].pQueuePriorities = &queuePriority;
+    }
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
-
     VkDeviceCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pQueueCreateInfos = &queueCreateInfo;
-    createInfo.queueCreateInfoCount = 1;
+    createInfo.queueCreateInfoCount = queueFamilyCount;
+    createInfo.pQueueCreateInfos = queueCreateInfos;
 
     createInfo.pEnabledFeatures = &deviceFeatures;
     createInfo.enabledExtensionCount = 0;
@@ -278,14 +302,17 @@ int main(void)
     VkInstance instance;
     create_VkInstance(&instance, validationLayers, validationLayers_count, enableValidationLayers);
 
-    VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance);
+    VkSurfaceKHR surface;
+    createSurface(instance, window, &surface);
+
+    VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance, surface);
 
     VkQueue graphicsQueue = {};
-    VkDevice device = createLogicalDevice(physicalDevice, &graphicsQueue);
+    VkDevice device = createLogicalDevice(physicalDevice, &graphicsQueue, surface);
 
     main_loop(window);
 
-    cleanup(window, instance, device);
+    cleanup(window, instance, device, surface);
 
     return 0;
 }
