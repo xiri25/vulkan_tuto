@@ -71,8 +71,13 @@ void main_loop(GLFWwindow* window)
     }
 }
 
-void cleanup(GLFWwindow* window, VkInstance instance, VkDevice device, VkSurfaceKHR surface, VkSwapchainKHR swapchain)
+void cleanup(GLFWwindow* window, VkInstance instance, VkDevice device, VkSurfaceKHR surface, VkSwapchainKHR swapchain, VkImageView* imageViews, const uint32_t imageCount)
 {
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        vkDestroyImageView(device, imageViews[i], NULL);
+    }
+
     vkDestroySwapchainKHR(device, swapchain, NULL);
 
     vkDestroyDevice(device, NULL);
@@ -351,13 +356,13 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR* capabilities, GLFWwi
     }
 }
 
-void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, GLFWwindow* window, VkDevice device)
+void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, GLFWwindow* window, VkDevice device, VkFormat* format, VkExtent2D* extent)
 {
     struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice, surface);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats, swapChainSupport.formats_count);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes, swapChainSupport.presentModes_count);
-    VkExtent2D extent = chooseSwapExtent(&swapChainSupport.capabilities, window);
+    *extent = chooseSwapExtent(&swapChainSupport.capabilities, window);
 
     /* 
      * Aside from these properties we also have to decide how many images we would like
@@ -378,7 +383,7 @@ void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice,
     createInfo.minImageCount = imageCount;
     createInfo.imageFormat = surfaceFormat.format;
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
-    createInfo.imageExtent = extent;
+    createInfo.imageExtent = *extent;
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
@@ -463,13 +468,7 @@ void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice,
         exit(8);
     }
 
-    /* TODO: Esto creo que tambien son variables en la clase */
-    vkGetSwapchainImagesKHR(device, *swapChain, &imageCount, NULL);
-    VkImage swapChainImages[imageCount];
-    vkGetSwapchainImagesKHR(device, *swapChain, &imageCount, swapChainImages);
-
-    VkFormat swapChainImageFormat = surfaceFormat.format;
-    VkExtent2D swapChainExtent = extent;
+    *format = surfaceFormat.format;
 
     free(swapChainSupport.formats);
     free(swapChainSupport.presentModes);
@@ -583,6 +582,32 @@ VkDevice createLogicalDevice(VkPhysicalDevice physicalDevice, VkQueue* graphicsQ
     return device;
 }
 
+void createImageViews(VkImage* swapChainImages, const uint32_t swapChainImages_count, const VkFormat swapChainImageFormat ,VkImageView* swapChainImageViews, VkDevice device)
+{
+    for (size_t i = 0; i < swapChainImages_count; i++) {
+        VkImageViewCreateInfo createInfo = {};
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = swapChainImages[i];
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = swapChainImageFormat;
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(device, &createInfo, NULL, &swapChainImageViews[i]) != VK_SUCCESS)
+        {
+            printf("failed to create image views!\n");
+            exit(9);
+        }
+    }
+}
+
 /* TODO: ENUM for error for exit() */
 int main(void)
 {
@@ -618,13 +643,27 @@ int main(void)
     VkQueue graphicsQueue = {};
     VkDevice device = createLogicalDevice(physicalDevice, &graphicsQueue, surface, deviceExtensions, deviceExtensions_count);
 
+    /* Creacion de la swapchain */
+    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice, surface);
+    VkFormat swapChainImageFormat = {};
+    VkExtent2D swapChainExtent = {};
+
     VkSwapchainKHR swapChain = {};
-    /* TODO: Creo que esta funcion interactua con bastantes mas variables de  la "clase" */
-    createSwapChain(&swapChain, physicalDevice, surface, window, device);
+    createSwapChain(&swapChain, physicalDevice, surface, window, device, &swapChainImageFormat, &swapChainExtent);
+
+    uint32_t imageCount = swapChainSupport.capabilities.minImageCount;
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, NULL);
+    VkImage swapChainImages[imageCount];
+    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages);
+    /* Fin de la creacion de la swapchain */
+
+    /* Creacion de las images views */
+    VkImageView swapChainImageViews[imageCount];
+    createImageViews(swapChainImages, imageCount, swapChainImageFormat, swapChainImageViews, device);
 
     main_loop(window);
 
-    cleanup(window, instance, device, surface, swapChain);
+    cleanup(window, instance, device, surface, swapChain, swapChainImageViews, imageCount);
 
     return 0;
 }
