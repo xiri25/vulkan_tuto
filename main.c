@@ -1,3 +1,4 @@
+#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -70,9 +71,15 @@ void main_loop(GLFWwindow* window)
     }
 }
 
-void cleanup(GLFWwindow* window, VkInstance instance, VkDevice device, VkSurfaceKHR surface, VkSwapchainKHR swapchain, VkImageView* imageViews, const uint32_t imageCount, VkPipelineLayout pipelineLayout)
+void cleanup(GLFWwindow* window, VkInstance instance,
+             VkDevice device, VkSurfaceKHR surface,
+             VkSwapchainKHR swapchain, VkImageView* imageViews,
+             const uint32_t imageCount, VkPipelineLayout pipelineLayout,
+             VkRenderPass renderPass, VkPipeline graphicsPipeline)
 {
+    vkDestroyPipeline(device, graphicsPipeline, NULL);
     vkDestroyPipelineLayout(device, pipelineLayout, NULL);
+    vkDestroyRenderPass(device, renderPass, NULL);
 
     for (uint32_t i = 0; i < imageCount; i++)
     {
@@ -650,7 +657,57 @@ VkShaderModule createShaderModule(VkDevice device, const char* code, size_t size
     return shaderModule;
 }
 
-void CreateGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipelineLayout* pipelineLayout)
+void createRenderPass(VkRenderPass* renderPass, VkFormat swapChainImageFormat, VkDevice device)
+{
+    VkAttachmentDescription colorAttachment = {};
+    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    /*
+      The loadOp and storeOp determine what to do with the data in the
+      attachment before rendering and after rendering. We have the following choices for loadOp:
+
+        - VK_ATTACHMENT_LOAD_OP_LOAD: Preserve the existing contents of the attachment
+        - VK_ATTACHMENT_LOAD_OP_CLEAR: Clear the values to a constant at the start
+        - VK_ATTACHMENT_LOAD_OP_DONT_CARE: Existing contents are undefined; we don’t care about them
+
+      In our case we’re going to use the clear operation to clear the framebuffer
+      to black before drawing a new frame. There are only two possibilities for the storeOp:
+
+        - VK_ATTACHMENT_STORE_OP_STORE: Rendered contents will be stored in memory and can be read later
+        - VK_ATTACHMENT_STORE_OP_DONT_CARE: Contents of the framebuffer will be undefined after the rendering operatio
+     */
+
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference colorAttachmentRef = {};
+    colorAttachmentRef.attachment = 0;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass = {};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+
+    VkRenderPassCreateInfo renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = &colorAttachment;
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+
+    if (vkCreateRenderPass(device, &renderPassInfo, NULL, renderPass) != VK_SUCCESS) {
+        printf("failed to create render pass!");
+        exit(14);
+    }
+}
+
+void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipelineLayout* pipelineLayout, VkPipeline *graphicsPipeline, VkRenderPass renderPass)
 {
     /*
      * The graphics pipeline in Vulkan is almost completely immutable,
@@ -948,9 +1005,31 @@ void CreateGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, pipelineLayout) != VK_SUCCESS) {
         printf("failed to create pipeline layout!\n");
-        exit(12);
+        exit(13);
     }
 
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = NULL; // Optional
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = *pipelineLayout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+    pipelineInfo.basePipelineIndex = -1; // Optional
+    
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, graphicsPipeline) != VK_SUCCESS) {
+        printf("failed to create graphics pipeline!\n");
+        exit(15);
+    }
 
     /* cleanup */
     free(vertShaderCode);
@@ -1012,13 +1091,18 @@ int main(void)
     VkImageView swapChainImageViews[imageCount];
     createImageViews(swapChainImages, imageCount, swapChainImageFormat, swapChainImageViews, device);
 
+    /* Creacion del Render Pass */
+    VkRenderPass renderPass;
+    createRenderPass(&renderPass, swapChainImageFormat, device);
+
     /* Creacion de la Graphics Pipeline */
     VkPipelineLayout pipelineLayout;
-    CreateGraphicsPipeline(device, swapChainExtent, &pipelineLayout);
+    VkPipeline graphicsPipeline;
+    createGraphicsPipeline(device, swapChainExtent, &pipelineLayout, &graphicsPipeline, renderPass);
 
     main_loop(window);
 
-    cleanup(window, instance, device, surface, swapChain, swapChainImageViews, imageCount, pipelineLayout);
+    cleanup(window, instance, device, surface, swapChain, swapChainImageViews, imageCount, pipelineLayout, renderPass, graphicsPipeline);
 
     return 0;
 }
