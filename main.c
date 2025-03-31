@@ -64,19 +64,27 @@ GLFWwindow* create_window(const uint32_t width, const uint32_t height)
     return glfwCreateWindow(width, height, "Vulkan", NULL, NULL);
 }
 
-void main_loop(GLFWwindow* window)
-{
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-    }
-}
-
 void cleanup(GLFWwindow* window, VkInstance instance,
              VkDevice device, VkSurfaceKHR surface,
              VkSwapchainKHR swapchain, VkImageView* imageViews,
              const uint32_t imageCount, VkPipelineLayout pipelineLayout,
-             VkRenderPass renderPass, VkPipeline graphicsPipeline)
+             VkRenderPass renderPass, VkPipeline graphicsPipeline,
+             VkFramebuffer* framebuffers, VkCommandPool commandPool,
+             VkSemaphore imageAvailableSemaphore,
+             VkSemaphore renderFinishedSemaphore,
+             VkFence inFlightFence)
 {
+    vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
+    vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
+    vkDestroyFence(device, inFlightFence, NULL);
+
+    vkDestroyCommandPool(device, commandPool, NULL);
+
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        vkDestroyFramebuffer(device, framebuffers[i], NULL);
+    }
+
     vkDestroyPipeline(device, graphicsPipeline, NULL);
     vkDestroyPipelineLayout(device, pipelineLayout, NULL);
     vkDestroyRenderPass(device, renderPass, NULL);
@@ -694,12 +702,22 @@ void createRenderPass(VkRenderPass* renderPass, VkFormat swapChainImageFormat, V
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorAttachmentRef;
 
+    VkSubpassDependency dependency = {};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
     VkRenderPassCreateInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     renderPassInfo.attachmentCount = 1;
     renderPassInfo.pAttachments = &colorAttachment;
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = 1;
+    renderPassInfo.pDependencies = &dependency;
 
     if (vkCreateRenderPass(device, &renderPassInfo, NULL, renderPass) != VK_SUCCESS) {
         printf("failed to create render pass!");
@@ -1038,6 +1056,237 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
 
+void createFramebuffers(VkFramebuffer* swapChainFramebuffers, VkImageView* swapChainImageViews,
+                        const uint32_t swapChainImageViews_count, VkRenderPass renderPass,
+                        VkExtent2D swapChainExtent, VkDevice device)
+{
+    for (size_t i = 0; i < swapChainImageViews_count; i++) {
+        VkImageView attachments[] = {
+            swapChainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferInfo = {};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.width = swapChainExtent.width;
+        framebufferInfo.height = swapChainExtent.height;
+        framebufferInfo.layers = 1;
+
+        if (vkCreateFramebuffer(device, &framebufferInfo, NULL, &swapChainFramebuffers[i]) != VK_SUCCESS)
+        {
+            printf("failed to create framebuffer!\n");
+            exit(16);
+        }
+    }
+}
+
+void createCommandPool(VkCommandPool* commandPool, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDevice device)
+{
+    /*
+     * Commands in Vulkan, like drawing operations and memory transfers, are not executed
+     * directly using function calls. You have to record all of the operations you want
+     * to perform in command buffer objects. The advantage of this is that when we are
+     * ready to tell the Vulkan what we want to do, all of the commands are submitted
+     * together and Vulkan can more efficiently process the commands since all of
+     * them are available together. In addition, this allows command recording to
+     * happen in multiple threads if so desired.
+     */
+
+    QueueFamilyIndices_t queueFamilyIndices = findQueueFamilies(physicalDevice, surface); // XD
+
+    VkCommandPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
+
+    if (vkCreateCommandPool(device, &poolInfo, NULL, commandPool) != VK_SUCCESS)
+    {
+        printf("failed to create command pool!\n");
+        exit(17);
+    }
+}
+
+void createCommandBuffer(VkCommandBuffer* commandBuffer ,VkCommandPool commandPool, VkDevice device)
+{
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+
+    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffer) != VK_SUCCESS)
+    {
+        printf("failed to allocate command buffers!\n");
+        exit(18);
+    }
+}
+
+void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
+                         VkRenderPass renderPass, VkFramebuffer* swapChainFramebuffers,
+                         VkExtent2D swapChainExtent, VkPipeline graphicsPipeline)
+{
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0; // Optional
+    beginInfo.pInheritanceInfo = NULL; // Optional
+
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+    {
+        printf("failed to begin recording command buffer!\n");
+        exit(19);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+    renderPassInfo.renderArea.offset.x = 0;
+    renderPassInfo.renderArea.offset.y = 0;
+    renderPassInfo.renderArea.extent = swapChainExtent;
+
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)(swapChainExtent.width);
+    viewport.height = (float)(swapChainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor = {};
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent = swapChainExtent;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(commandBuffer);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+    {
+        printf("failed to record command buffer!\n");
+        exit(20);
+    }
+}
+
+void createSyncObjetcs(VkSemaphore* imageAvailableSemaphore, VkSemaphore* renderFinishedSemaphore,
+                       VkFence* inFlightFence, VkDevice device)
+{
+    VkSemaphoreCreateInfo semaphoreInfo = {};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo = {};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Para no esperar indefinidamente la primera vez que se renderiza
+
+    if (vkCreateSemaphore(device, &semaphoreInfo, NULL, imageAvailableSemaphore) != VK_SUCCESS ||
+        vkCreateSemaphore(device, &semaphoreInfo, NULL, renderFinishedSemaphore) != VK_SUCCESS ||
+        vkCreateFence(device, &fenceInfo, NULL, inFlightFence) != VK_SUCCESS)
+    {
+        printf("failed to create semaphores!");
+        exit(21);
+    }
+
+}
+
+void drawFrame(VkDevice device,
+               VkFence inFlightFence, // No se si pasarlo como pointer
+               VkSemaphore imageAvailableSemaphore, // No se si pasarlo como pointer
+               VkSemaphore renderFinishedSemaphore, // No se si pasarlo como pointer
+               VkSwapchainKHR swapChain,
+               VkCommandBuffer commandBuffer,
+               VkRenderPass renderPass,
+               VkFramebuffer* framebuffers,
+               VkExtent2D extent,
+               VkPipeline pipeline,
+               VkQueue graphicsQueue)
+{
+    /*
+     * At a high level, rendering a frame in Vulkan consists of a common set of steps:
+        - Wait for the previous frame to finish
+        - Acquire an image from the swap chain
+        - Record a command buffer which draws the scene onto that image
+        - Submit the recorded command buffer
+        - Present the swap chain image
+     */
+
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFence);
+
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+    vkResetCommandBuffer(commandBuffer, 0);
+    recordCommandBuffer(commandBuffer, imageIndex, renderPass, framebuffers, extent, pipeline);
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS)
+    {
+        printf("failed to submit draw command buffer!\n");
+        exit(22);
+    }
+
+    VkPresentInfoKHR presentInfo = {};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+
+    VkSwapchainKHR swapChains[] = {swapChain};
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pResults = NULL; // Optional
+    vkQueuePresentKHR(graphicsQueue, &presentInfo);
+}
+
+void mainLoop(GLFWwindow* window,
+              VkDevice device,
+              VkFence inFlightFence, // No se si pasarlo como pointer
+              VkSemaphore imageAvailableSemaphore, // No se si pasarlo como pointer
+              VkSemaphore renderFinishedSemaphore, // No se si pasarlo como pointer
+              VkSwapchainKHR swapChain,
+              VkCommandBuffer commandBuffer,
+              VkRenderPass renderPass,
+              VkFramebuffer* framebuffers,
+              VkExtent2D extent,
+              VkPipeline pipeline,
+              VkQueue graphicsQueue)
+{
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        drawFrame(device, inFlightFence,
+                  imageAvailableSemaphore, renderFinishedSemaphore,
+                  swapChain, commandBuffer, renderPass,
+                  framebuffers, extent, pipeline, graphicsQueue);
+    }
+
+    vkDeviceWaitIdle(device);
+}
+
 /* TODO: ENUM for error for exit() */
 int main(void)
 {
@@ -1100,9 +1349,33 @@ int main(void)
     VkPipeline graphicsPipeline;
     createGraphicsPipeline(device, swapChainExtent, &pipelineLayout, &graphicsPipeline, renderPass);
 
-    main_loop(window);
+    VkFramebuffer swapChainFramebuffers[imageCount];
+    createFramebuffers(swapChainFramebuffers, swapChainImageViews, imageCount, renderPass, swapChainExtent, device);
 
-    cleanup(window, instance, device, surface, swapChain, swapChainImageViews, imageCount, pipelineLayout, renderPass, graphicsPipeline);
+    VkCommandPool commandPool;
+    createCommandPool(&commandPool, physicalDevice, surface, device);
+
+    VkCommandBuffer commandBuffer;
+    createCommandBuffer(&commandBuffer, commandPool, device);
+
+    VkSemaphore imageAvailableSemaphore; // In GPU
+    VkSemaphore renderFinishedSemaphore; // In GPU
+    VkFence inFlightFence; // In CPU
+    createSyncObjetcs(&imageAvailableSemaphore, &renderFinishedSemaphore,
+                      &inFlightFence, device);
+
+    mainLoop(window, device,
+             inFlightFence, imageAvailableSemaphore,
+             renderFinishedSemaphore, swapChain,
+             commandBuffer, renderPass,
+             swapChainFramebuffers, swapChainExtent,
+             graphicsPipeline, graphicsQueue);
+
+    cleanup(window, instance, device, surface, swapChain,
+            swapChainImageViews, imageCount, pipelineLayout,
+            renderPass, graphicsPipeline, swapChainFramebuffers,
+            commandPool, imageAvailableSemaphore,
+            renderFinishedSemaphore, inFlightFence);
 
     return 0;
 }
