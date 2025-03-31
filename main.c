@@ -1042,7 +1042,8 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
     pipelineInfo.basePipelineIndex = -1; // Optional
-    
+
+    /* Here is where the shaders are compile form spir-v to machine expecific instructions */
     if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, graphicsPipeline) != VK_SUCCESS) {
         printf("failed to create graphics pipeline!\n");
         exit(15);
