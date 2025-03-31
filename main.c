@@ -226,8 +226,8 @@ struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, Vk
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
 
     uint32_t formatCount;
-    details.formats_count = formatCount; //For being able to know if is empty
     vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, NULL);
+    details.formats_count = formatCount; //For being able to know if is empty
 
     if (formatCount != 0)
     {
