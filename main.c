@@ -235,8 +235,8 @@ struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, Vk
     }
 
     uint32_t presentModeCount;
-    details.presentModes_count = presentModeCount; //For being able to know if is empty
     vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, NULL);
+    details.presentModes_count = presentModeCount; //For being able to know if is empty
 
     if (presentModeCount != 0)
     {
@@ -513,9 +513,11 @@ bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char*
         swapChainAdequate = (swapChainSupport.formats_count != 0 && swapChainSupport.presentModes_count != 0);
     }
 
-    return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
-           deviceFeatures.geometryShader && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
-           extensionsSupported && swapChainAdequate;
+    bool isDeviceSuitable = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+        deviceFeatures.geometryShader && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
+        extensionsSupported && swapChainAdequate;
+
+    return isDeviceSuitable;
     /*
      * El tutorial implementa una forma de
      * ordenar distintas gpu para ver cual es mas suitable

@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -Wextra
+CFLAGS=-Wall -Wextra -O2
 LDFLAGS=-g -lglfw -lvulkan -ldl -lpthread #-lX11 -lXxf86vm -lXrandr -lXi
 SRC_FILES=main.c
 
