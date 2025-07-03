@@ -69,13 +69,15 @@ void cleanup(GLFWwindow* window, VkInstance instance,
              const uint32_t imageCount, VkPipelineLayout pipelineLayout,
              VkRenderPass renderPass, VkPipeline graphicsPipeline,
              VkFramebuffer* framebuffers, VkCommandPool commandPool,
-             VkSemaphore imageAvailableSemaphore,
-             VkSemaphore renderFinishedSemaphore,
-             VkFence inFlightFence)
+             VkSemaphore* imageAvailableSemaphores,
+             VkSemaphore* renderFinishedSemaphores,
+             VkFence* inFlightFences)
 {
-    vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
-    vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
-    vkDestroyFence(device, inFlightFence, NULL);
+    for (size_t i = 0; i < 2; i++) {
+        vkDestroySemaphore(device, renderFinishedSemaphores[i], NULL);
+        vkDestroySemaphore(device, imageAvailableSemaphores[i], NULL);
+        vkDestroyFence(device, inFlightFences[i], NULL);
+    }
 
     vkDestroyCommandPool(device, commandPool, NULL);
 
@@ -810,7 +812,7 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
      * configuring the shader using variables at render time, because the compiler
      * can do optimizations like eliminating if statements that depend on these
      * values. If you don’t have any constants like that, then you can set the
-     * member to nullptr, which our struct initialization does automatically.
+     * member to NULL, which our struct initialization does automatically.
      */
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
@@ -1110,15 +1112,15 @@ void createCommandPool(VkCommandPool* commandPool, VkPhysicalDevice physicalDevi
     }
 }
 
-void createCommandBuffer(VkCommandBuffer* commandBuffer ,VkCommandPool commandPool, VkDevice device)
+void createCommandBuffer(VkCommandBuffer* commandBuffers ,VkCommandPool commandPool, VkDevice device)
 {
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = commandPool;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
+    allocInfo.commandBufferCount = 2; // FIXME: MAX_FRAMES_IN_FLIGHT
 
-    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffer) != VK_SUCCESS)
+    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers) != VK_SUCCESS)
     {
         printf("failed to allocate command buffers!\n");
         exit(18);
@@ -1181,8 +1183,8 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
     }
 }
 
-void createSyncObjetcs(VkSemaphore* imageAvailableSemaphore, VkSemaphore* renderFinishedSemaphore,
-                       VkFence* inFlightFence, VkDevice device)
+void createSyncObjetcs(VkSemaphore* imageAvailableSemaphores, VkSemaphore* renderFinishedSemaphores,
+                       VkFence* inFlightFences, VkDevice device)
 {
     VkSemaphoreCreateInfo semaphoreInfo = {};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1191,22 +1193,25 @@ void createSyncObjetcs(VkSemaphore* imageAvailableSemaphore, VkSemaphore* render
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Para no esperar indefinidamente la primera vez que se renderiza
 
-    if (vkCreateSemaphore(device, &semaphoreInfo, NULL, imageAvailableSemaphore) != VK_SUCCESS ||
-        vkCreateSemaphore(device, &semaphoreInfo, NULL, renderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(device, &fenceInfo, NULL, inFlightFence) != VK_SUCCESS)
-    {
-        printf("failed to create semaphores!");
-        exit(21);
+
+    for (uint32_t i = 0; i < 2; i++) { // FIXME: MAX_FRAMES_IN_FLIGHT
+        if (vkCreateSemaphore(device, &semaphoreInfo, NULL, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, NULL, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(device, &fenceInfo, NULL, &inFlightFences[i]) != VK_SUCCESS)
+        {
+            printf("failed to create semaphores!");
+            exit(21);
+        }
     }
 
 }
 
 void drawFrame(VkDevice device,
-               VkFence inFlightFence, // No se si pasarlo como pointer
-               VkSemaphore imageAvailableSemaphore, // No se si pasarlo como pointer
-               VkSemaphore renderFinishedSemaphore, // No se si pasarlo como pointer
+               VkFence* inFlightFences, // No se si pasarlo como pointer
+               VkSemaphore* imageAvailableSemaphores, // No se si pasarlo como pointer
+               VkSemaphore* renderFinishedSemaphores, // No se si pasarlo como pointer
                VkSwapchainKHR swapChain,
-               VkCommandBuffer commandBuffer,
+               VkCommandBuffer* commandBuffers,
                VkRenderPass renderPass,
                VkFramebuffer* framebuffers,
                VkExtent2D extent,
@@ -1222,31 +1227,34 @@ void drawFrame(VkDevice device,
         - Present the swap chain image
      */
 
-    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFence);
+    uint32_t currentFrame = 0;
+
+    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-    vkResetCommandBuffer(commandBuffer, 0);
-    recordCommandBuffer(commandBuffer, imageIndex, renderPass, framebuffers, extent, pipeline);
+    vkResetCommandBuffer(commandBuffers[currentFrame], 0);
+    recordCommandBuffer(commandBuffers[currentFrame], imageIndex, renderPass, framebuffers, extent, pipeline);
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.pCommandBuffers = commandBuffers;
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS)
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
     {
         printf("failed to submit draw command buffer!\n");
         exit(22);
@@ -1263,15 +1271,17 @@ void drawFrame(VkDevice device,
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL; // Optional
     vkQueuePresentKHR(graphicsQueue, &presentInfo);
+
+    currentFrame = (currentFrame + 1) % 2; // FIXME: MAX_FRAMES_IN_FLIGHT
 }
 
 void mainLoop(GLFWwindow* window,
               VkDevice device,
-              VkFence inFlightFence, // No se si pasarlo como pointer
-              VkSemaphore imageAvailableSemaphore, // No se si pasarlo como pointer
-              VkSemaphore renderFinishedSemaphore, // No se si pasarlo como pointer
+              VkFence* inFlightFences, // No se si pasarlo como pointer
+              VkSemaphore* imageAvailableSemaphores, // No se si pasarlo como pointer
+              VkSemaphore* renderFinishedSemaphores, // No se si pasarlo como pointer
               VkSwapchainKHR swapChain,
-              VkCommandBuffer commandBuffer,
+              VkCommandBuffer* commandBuffers,
               VkRenderPass renderPass,
               VkFramebuffer* framebuffers,
               VkExtent2D extent,
@@ -1280,9 +1290,9 @@ void mainLoop(GLFWwindow* window,
 {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        drawFrame(device, inFlightFence,
-                  imageAvailableSemaphore, renderFinishedSemaphore,
-                  swapChain, commandBuffer, renderPass,
+        drawFrame(device, inFlightFences,
+                  imageAvailableSemaphores, renderFinishedSemaphores,
+                  swapChain, commandBuffers, renderPass,
                   framebuffers, extent, pipeline, graphicsQueue);
     }
 
@@ -1295,6 +1305,8 @@ int main(void)
 
     const uint32_t WIDTH = 800;
     const uint32_t HEIGHT = 600;
+
+    const int MAX_FRAMES_IN_FLIGHT = 2;
 
     const char* validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
     const uint32_t validationLayers_count = 1;
@@ -1357,27 +1369,27 @@ int main(void)
     VkCommandPool commandPool;
     createCommandPool(&commandPool, physicalDevice, surface, device);
 
-    VkCommandBuffer commandBuffer;
-    createCommandBuffer(&commandBuffer, commandPool, device);
+    VkCommandBuffer commandBuffers[MAX_FRAMES_IN_FLIGHT] = {};
+    createCommandBuffer(commandBuffers, commandPool, device);
 
-    VkSemaphore imageAvailableSemaphore; // In GPU
-    VkSemaphore renderFinishedSemaphore; // In GPU
-    VkFence inFlightFence; // In CPU
-    createSyncObjetcs(&imageAvailableSemaphore, &renderFinishedSemaphore,
-                      &inFlightFence, device);
+    VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {}; // In GPU
+    VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {}; // In GPU
+    VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT] = {}; // In CPU
+    createSyncObjetcs(imageAvailableSemaphores, renderFinishedSemaphores,
+                      inFlightFences, device);
 
     mainLoop(window, device,
-             inFlightFence, imageAvailableSemaphore,
-             renderFinishedSemaphore, swapChain,
-             commandBuffer, renderPass,
+             inFlightFences, imageAvailableSemaphores,
+             renderFinishedSemaphores, swapChain,
+             commandBuffers, renderPass,
              swapChainFramebuffers, swapChainExtent,
              graphicsPipeline, graphicsQueue);
 
     cleanup(window, instance, device, surface, swapChain,
             swapChainImageViews, imageCount, pipelineLayout,
             renderPass, graphicsPipeline, swapChainFramebuffers,
-            commandPool, imageAvailableSemaphore,
-            renderFinishedSemaphore, inFlightFence);
+            commandPool, imageAvailableSemaphores,
+            renderFinishedSemaphores, inFlightFences);
 
     return 0;
 }
