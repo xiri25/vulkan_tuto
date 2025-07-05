@@ -1,3 +1,4 @@
+#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -6,6 +7,72 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    VkSurfaceFormatKHR* formats;
+    uint32_t formats_count;
+    VkPresentModeKHR* presentModes;
+    uint32_t presentModes_count;
+};
+
+typedef struct vk_Struct {
+    const uint32_t WIDTH;
+    const uint32_t HEIGHT;
+
+    const char** validationLayers;
+    const uint32_t validationLayers_count;
+
+    const char** deviceExtensions;
+    const uint32_t deviceExtensions_count;
+
+    const bool enableValidationLayers;
+
+    GLFWwindow* window;
+
+    VkInstance instance;
+    VkSurfaceKHR surface;
+    VkPhysicalDevice physicalDevice;
+    VkQueue graphicsQueue;
+    VkDevice device;
+ 
+    struct SwapChainSupportDetails swapChainSupport;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
+    VkSwapchainKHR swapChain;
+
+    uint32_t imageCount;
+    VkImage* swapChainImages;
+    VkImageView* swapChainImageViews;
+    VkFramebuffer* swapChainFramebuffers;
+
+    VkRenderPass renderPass;
+
+    VkPipelineLayout pipelineLayout;
+    VkPipeline graphicsPipeline;
+
+    VkCommandPool commandPool;
+
+    const int MAX_FRAMES_IN_FLIGHT;
+    VkCommandBuffer* commandBuffers;
+    VkSemaphore* imageAvailableSemaphores;
+    VkSemaphore* renderFinishedSemaphores;
+    VkFence* inFlightFences;
+} vk_Struct_t;
+
+GLFWwindow* create_window(vk_Struct_t* app)
+{
+    const uint32_t width = app->WIDTH;
+    const uint32_t height = app->HEIGHT;
+
+    glfwInit();
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
+    return glfwCreateWindow(width, height, "Vulkan", NULL, NULL);
+}
+
 
 /* La he tenido que traducir de cpp porque usaba for loops fancy XD, puede estar mal */
 bool checkValidationLayerSupport(const char** validationLayers, const uint32_t validationLayers_count)
@@ -44,73 +111,9 @@ bool checkValidationLayerSupport(const char** validationLayers, const uint32_t v
     return true;
 }
 
-void createSurface(VkInstance instance, GLFWwindow* window, VkSurfaceKHR* surface)
+void create_VkInstance(vk_Struct_t* app)
 {
-    if ( glfwCreateWindowSurface(instance, window, NULL, surface) != VK_SUCCESS )
-    {
-        printf("Failed to create window surface\n");
-        exit(7);
-    }
-}
-
-GLFWwindow* create_window(const uint32_t width, const uint32_t height)
-{
-    glfwInit();
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-
-    return glfwCreateWindow(width, height, "Vulkan", NULL, NULL);
-}
-
-void cleanup(GLFWwindow* window, VkInstance instance,
-             VkDevice device, VkSurfaceKHR surface,
-             VkSwapchainKHR swapchain, VkImageView* imageViews,
-             const uint32_t imageCount, VkPipelineLayout pipelineLayout,
-             VkRenderPass renderPass, VkPipeline graphicsPipeline,
-             VkFramebuffer* framebuffers, VkCommandPool commandPool,
-             VkSemaphore* imageAvailableSemaphores,
-             VkSemaphore* renderFinishedSemaphores,
-             VkFence* inFlightFences)
-{
-    for (size_t i = 0; i < 2; i++) {
-        vkDestroySemaphore(device, renderFinishedSemaphores[i], NULL);
-        vkDestroySemaphore(device, imageAvailableSemaphores[i], NULL);
-        vkDestroyFence(device, inFlightFences[i], NULL);
-    }
-
-    vkDestroyCommandPool(device, commandPool, NULL);
-
-    for (uint32_t i = 0; i < imageCount; i++)
-    {
-        vkDestroyFramebuffer(device, framebuffers[i], NULL);
-    }
-
-    vkDestroyPipeline(device, graphicsPipeline, NULL);
-    vkDestroyPipelineLayout(device, pipelineLayout, NULL);
-    vkDestroyRenderPass(device, renderPass, NULL);
-
-    for (uint32_t i = 0; i < imageCount; i++)
-    {
-        vkDestroyImageView(device, imageViews[i], NULL);
-    }
-
-    vkDestroySwapchainKHR(device, swapchain, NULL);
-
-    vkDestroyDevice(device, NULL);
-
-    vkDestroySurfaceKHR(instance, surface, NULL);
-
-    vkDestroyInstance(instance, NULL);
-
-    glfwDestroyWindow(window);
-
-    glfwTerminate();
-}
-
-void create_VkInstance(VkInstance* vk_instance, const char** validationLayers, const uint32_t validationLayers_count, const bool enableValidationLayers)
-{
-    if(enableValidationLayers && !checkValidationLayerSupport(validationLayers, validationLayers_count))
+    if(app->enableValidationLayers && !checkValidationLayerSupport(app->validationLayers, app->validationLayers_count))
     {
         printf("validation layers requested, but not available\n");
         exit(3);
@@ -138,18 +141,27 @@ void create_VkInstance(VkInstance* vk_instance, const char** validationLayers, c
 
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
-    if (enableValidationLayers)
+    if (app->enableValidationLayers)
     {
-        createInfo.enabledLayerCount = validationLayers_count;
-        createInfo.ppEnabledLayerNames = validationLayers;
+        createInfo.enabledLayerCount = app->validationLayers_count;
+        createInfo.ppEnabledLayerNames = app->validationLayers;
     } else {
         createInfo.enabledLayerCount = 0;
     }
 
-    if (vkCreateInstance(&createInfo, NULL, vk_instance) != VK_SUCCESS)
+    if (vkCreateInstance(&createInfo, NULL, &app->instance) != VK_SUCCESS)
     {
         printf("Failed to create an instance\n");
         exit(2);
+    }
+}
+
+void createSurface(vk_Struct_t* app)
+{
+    if ( glfwCreateWindowSurface(app->instance, app->window, NULL, &app->surface) != VK_SUCCESS )
+    {
+        printf("Failed to create window surface\n");
+        exit(7);
     }
 }
 
@@ -290,6 +302,116 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, const char** deviceExt
     return isEmpty;
 }
 
+bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char** deviceExtensions, const uint32_t deviceExtensionsCount)
+{
+    VkPhysicalDeviceProperties deviceProperties;
+    VkPhysicalDeviceFeatures deviceFeatures;
+    QueueFamilyIndices_t indices;
+    vkGetPhysicalDeviceProperties(device, &deviceProperties);
+    vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+    indices = findQueueFamilies(device, surface); // El tuto ahora solo hace esta comprobacion XD
+
+    bool extensionsSupported = checkDeviceExtensionSupport(device, deviceExtensions, deviceExtensionsCount);
+
+    /*
+     * It is important that we only try to query
+     * for swap chain support after verifying that
+     * the extension is available
+     */
+
+    bool swapChainAdequate = false;
+    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device, surface);
+    if (extensionsSupported)
+    {
+        swapChainAdequate = (swapChainSupport.formats_count != 0 && swapChainSupport.presentModes_count != 0);
+    }
+
+    bool isDeviceSuitable = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+        deviceFeatures.geometryShader && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
+        extensionsSupported && swapChainAdequate;
+
+    return isDeviceSuitable;
+    /*
+     * El tutorial implementa una forma de
+     * ordenar distintas gpu para ver cual es mas suitable
+     * en otra funcion, no lo voy a hacer
+     */
+}
+
+void pickPhysicalDevice(vk_Struct_t* app)
+{
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(app->instance, &deviceCount, NULL);
+    if (deviceCount == 0) {
+        printf("failed to find GPUs with Vulkan support!\n");
+        exit(4);
+    }
+    VkPhysicalDevice devices[deviceCount];
+    vkEnumeratePhysicalDevices(app->instance, &deviceCount, devices);
+    for (uint32_t i = 0; i < deviceCount; i++)
+    {
+        if (isDeviceSuitable(devices[i], app->surface, app->deviceExtensions, app->deviceExtensions_count))
+        {
+            physicalDevice = devices[i]; // Elige el primero que vale
+            break;
+        }
+    }
+// -1 porque no hay optional, TODO: I hate it
+
+    if (physicalDevice == VK_NULL_HANDLE)
+    {
+        printf("failed to find a suitable GPU!\n");
+        exit(5);
+    }
+
+    app->physicalDevice = physicalDevice;
+}
+
+void createLogicalDevice(vk_Struct_t* app)
+{
+    VkDevice device;
+
+    QueueFamilyIndices_t indices = findQueueFamilies(app->physicalDevice, app->surface);
+
+    uint32_t uniqueQueueFamilies[2] = {indices.graphicsFamily, indices.presentFamily};
+    uint32_t queueFamilyCount = (indices.graphicsFamily == indices.presentFamily) ? 1 : 2;
+
+    VkDeviceQueueCreateInfo queueCreateInfos[queueFamilyCount];
+    float queuePriority = 1.0f;
+
+    /* I think this shit works XD */
+    for (uint32_t i = 0; i < queueFamilyCount; i++)
+    {
+        VkDeviceQueueCreateInfo queueCreateInfo = {};
+        queueCreateInfos[i] = queueCreateInfo;
+        queueCreateInfos[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfos[i].queueFamilyIndex = uniqueQueueFamilies[i];
+        queueCreateInfos[i].queueCount = 1;
+        queueCreateInfos[i].pQueuePriorities = &queuePriority;
+    }
+
+    VkPhysicalDeviceFeatures deviceFeatures = {};
+    VkDeviceCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.queueCreateInfoCount = queueFamilyCount;
+    createInfo.pQueueCreateInfos = queueCreateInfos;
+
+    createInfo.pEnabledFeatures = &deviceFeatures;
+    createInfo.enabledExtensionCount = app->deviceExtensions_count;
+    createInfo.ppEnabledExtensionNames = app->deviceExtensions;
+    if ( vkCreateDevice(app->physicalDevice, &createInfo, NULL, &device) != VK_SUCCESS )
+    {
+        printf("failed to create logical device!\n");
+        exit(6);
+    }
+
+    vkGetDeviceQueue(device, indices.graphicsFamily, 0, &app->graphicsQueue);
+
+    app->device = device;
+}
+
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const VkSurfaceFormatKHR* availableFormats, const uint32_t availableFormats_count)
 {
     for (uint32_t i = 0; i < availableFormats_count; i++)
@@ -373,13 +495,13 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR* capabilities, GLFWwi
     }
 }
 
-void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, GLFWwindow* window, VkDevice device, VkFormat* format, VkExtent2D* extent)
+void createSwapChain(vk_Struct_t* app)
 {
-    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice, surface);
+    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(app->physicalDevice, app->surface);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats, swapChainSupport.formats_count);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes, swapChainSupport.presentModes_count);
-    *extent = chooseSwapExtent(&swapChainSupport.capabilities, window);
+    app->swapChainExtent = chooseSwapExtent(&swapChainSupport.capabilities, app->window);
 
     /* 
      * Aside from these properties we also have to decide how many images we would like
@@ -388,19 +510,19 @@ void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice,
      * doing this, where 0 is a special value that means that there is no maximum:
      */
 
-    uint32_t imageCount = swapChainSupport.capabilities.minImageCount;
-    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+    app->imageCount = swapChainSupport.capabilities.minImageCount;
+    if (swapChainSupport.capabilities.maxImageCount > 0 && app->imageCount > swapChainSupport.capabilities.maxImageCount)
     {
-        imageCount = swapChainSupport.capabilities.maxImageCount;
+        app->imageCount = swapChainSupport.capabilities.maxImageCount;
     }
 
     VkSwapchainCreateInfoKHR createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    createInfo.surface = surface;
-    createInfo.minImageCount = imageCount;
+    createInfo.surface = app->surface;
+    createInfo.minImageCount = app->imageCount;
     createInfo.imageFormat = surfaceFormat.format;
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
-    createInfo.imageExtent = *extent;
+    createInfo.imageExtent = app->swapChainExtent;
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
@@ -418,7 +540,7 @@ void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice,
      * to a swap chain image
      */
 
-    struct QueueFamilyIndices indices = findQueueFamilies(physicalDevice, surface);
+    struct QueueFamilyIndices indices = findQueueFamilies(app->physicalDevice, app->surface);
     uint32_t queueFamilyIndices[] = {indices.graphicsFamily, indices.presentFamily};
 
     if (indices.graphicsFamily != indices.presentFamily)
@@ -479,136 +601,26 @@ void createSwapChain(VkSwapchainKHR* swapChain, VkPhysicalDevice physicalDevice,
                                     I think it is for when miminized or behind another window */
     createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-    if (vkCreateSwapchainKHR(device, &createInfo, NULL, swapChain) != VK_SUCCESS)
+    if (vkCreateSwapchainKHR(app->device, &createInfo, NULL, &app->swapChain) != VK_SUCCESS)
     {
         printf("failed to create swap chain!\n");
         exit(8);
     }
 
-    *format = surfaceFormat.format;
+    app->swapChainImageFormat = surfaceFormat.format;
 
     free(swapChainSupport.formats);
     free(swapChainSupport.presentModes);
 }
 
-bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char** deviceExtensions, const uint32_t deviceExtensionsCount)
+void createImageViews(vk_Struct_t* app)
 {
-    VkPhysicalDeviceProperties deviceProperties;
-    VkPhysicalDeviceFeatures deviceFeatures;
-    QueueFamilyIndices_t indices;
-    vkGetPhysicalDeviceProperties(device, &deviceProperties);
-    vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-    indices = findQueueFamilies(device, surface); // El tuto ahora solo hace esta comprobacion XD
-    
-    bool extensionsSupported = checkDeviceExtensionSupport(device, deviceExtensions, deviceExtensionsCount);
-
-    /* 
-     * It is important that we only try to query
-     * for swap chain support after verifying that
-     * the extension is available
-     */
-
-    bool swapChainAdequate = false;
-    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device, surface);
-    if (extensionsSupported)
-    {
-        swapChainAdequate = (swapChainSupport.formats_count != 0 && swapChainSupport.presentModes_count != 0);
-    }
-
-    bool isDeviceSuitable = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
-        deviceFeatures.geometryShader && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
-        extensionsSupported && swapChainAdequate;
-
-    return isDeviceSuitable;
-    /*
-     * El tutorial implementa una forma de
-     * ordenar distintas gpu para ver cual es mas suitable
-     * en otra funcion, no lo voy a hacer
-     */
-}
-
-VkPhysicalDevice pickPhysicalDevice(VkInstance vk_instance, VkSurfaceKHR surface, const char** deviceExtensions, const uint32_t deviceExtensionsCount)
-{
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(vk_instance, &deviceCount, NULL);
-    if (deviceCount == 0) {
-        printf("failed to find GPUs with Vulkan support!\n");
-        exit(4);
-    }
-    VkPhysicalDevice devices[deviceCount];
-    vkEnumeratePhysicalDevices(vk_instance, &deviceCount, devices);
-    for (uint32_t i = 0; i < deviceCount; i++)
-    {
-        if (isDeviceSuitable(devices[i], surface, deviceExtensions, deviceExtensionsCount))
-        {
-            physicalDevice = devices[i]; // Elige el primero que vale
-            break;
-        }
-    }
-// -1 porque no hay optional, TODO: I hate it
-    
-    if (physicalDevice == VK_NULL_HANDLE)
-    {
-        printf("failed to find a suitable GPU!\n");
-        exit(5);
-    }
-
-    return physicalDevice;
-}
-
-VkDevice createLogicalDevice(VkPhysicalDevice physicalDevice, VkQueue* graphicsQueue, VkSurfaceKHR surface, const char** deviceExtensions, const uint32_t deviceExtensions_count)
-{
-    VkDevice device;
-
-    QueueFamilyIndices_t indices = findQueueFamilies(physicalDevice, surface);
-
-    uint32_t uniqueQueueFamilies[2] = {indices.graphicsFamily, indices.presentFamily};
-    uint32_t queueFamilyCount = (indices.graphicsFamily == indices.presentFamily) ? 1 : 2;
-
-    VkDeviceQueueCreateInfo queueCreateInfos[queueFamilyCount];
-    float queuePriority = 1.0f;
-
-    /* I think this shit works XD */
-    for (uint32_t i = 0; i < queueFamilyCount; i++)
-    {
-        VkDeviceQueueCreateInfo queueCreateInfo = {};
-        queueCreateInfos[i] = queueCreateInfo;
-        queueCreateInfos[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfos[i].queueFamilyIndex = uniqueQueueFamilies[i];
-        queueCreateInfos[i].queueCount = 1;
-        queueCreateInfos[i].pQueuePriorities = &queuePriority;
-    }
-
-    VkPhysicalDeviceFeatures deviceFeatures = {};
-    VkDeviceCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.queueCreateInfoCount = queueFamilyCount;
-    createInfo.pQueueCreateInfos = queueCreateInfos;
-
-    createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = deviceExtensions_count;
-    createInfo.ppEnabledExtensionNames = deviceExtensions;
-    if ( vkCreateDevice(physicalDevice, &createInfo, NULL, &device) != VK_SUCCESS )
-    {
-        printf("failed to create logical device!\n");
-        exit(6);
-    }
-
-    vkGetDeviceQueue(device, indices.graphicsFamily, 0, graphicsQueue); // TODO: API figure it out
-
-    return device;
-}
-
-void createImageViews(VkImage* swapChainImages, const uint32_t swapChainImages_count, const VkFormat swapChainImageFormat ,VkImageView* swapChainImageViews, VkDevice device)
-{
-    for (size_t i = 0; i < swapChainImages_count; i++) {
+    for (size_t i = 0; i < app->imageCount; i++) {
         VkImageViewCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = swapChainImages[i];
+        createInfo.image = app->swapChainImages[i];
         createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = swapChainImageFormat;
+        createInfo.format = app->swapChainImageFormat;
         createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
         createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
         createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -619,7 +631,7 @@ void createImageViews(VkImage* swapChainImages, const uint32_t swapChainImages_c
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
 
-        if (vkCreateImageView(device, &createInfo, NULL, &swapChainImageViews[i]) != VK_SUCCESS)
+        if (vkCreateImageView(app->device, &createInfo, NULL, &app->swapChainImageViews[i]) != VK_SUCCESS)
         {
             printf("failed to create image views!\n");
             exit(9);
@@ -627,51 +639,10 @@ void createImageViews(VkImage* swapChainImages, const uint32_t swapChainImages_c
     }
 }
 
-char* readFile(const char* filename, size_t* fileSize) {
-    FILE* file = fopen(filename, "rb");
-    if (!file) {
-        printf("failed to open file %s\n", filename);
-        exit(10);
-    }
-
-    fseek(file, 0, SEEK_END);
-    *fileSize = ftell(file);
-    rewind(file);
-
-    char* buffer = (char*)malloc(*fileSize);
-    if (!buffer) {
-        printf("failed to allocate memory for the file %s\n", filename);
-        fclose(file);
-        exit(11);
-    }
-
-    fread(buffer, 1, *fileSize, file);
-    fclose(file);
-
-    return buffer;
-}
-
-VkShaderModule createShaderModule(VkDevice device, const char* code, size_t size)
-{
-    VkShaderModuleCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = size;
-    createInfo.pCode = (uint32_t*)code;
-
-    VkShaderModule shaderModule;
-    if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS)
-    {
-        printf("failed to create shader module!");
-        exit(12);
-    }
-
-    return shaderModule;
-}
-
-void createRenderPass(VkRenderPass* renderPass, VkFormat swapChainImageFormat, VkDevice device)
+void createRenderPass(vk_Struct_t* app)
 {
     VkAttachmentDescription colorAttachment = {};
-    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.format = app->swapChainImageFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
 
     /*
@@ -722,13 +693,54 @@ void createRenderPass(VkRenderPass* renderPass, VkFormat swapChainImageFormat, V
     renderPassInfo.dependencyCount = 1;
     renderPassInfo.pDependencies = &dependency;
 
-    if (vkCreateRenderPass(device, &renderPassInfo, NULL, renderPass) != VK_SUCCESS) {
+    if (vkCreateRenderPass(app->device, &renderPassInfo, NULL, &app->renderPass) != VK_SUCCESS) {
         printf("failed to create render pass!");
         exit(14);
     }
 }
 
-void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipelineLayout* pipelineLayout, VkPipeline *graphicsPipeline, VkRenderPass renderPass)
+char* readFile(const char* filename, size_t* fileSize) {
+    FILE* file = fopen(filename, "rb");
+    if (!file) {
+        printf("failed to open file %s\n", filename);
+        exit(10);
+    }
+
+    fseek(file, 0, SEEK_END);
+    *fileSize = ftell(file);
+    rewind(file);
+
+    char* buffer = (char*)malloc(*fileSize);
+    if (!buffer) {
+        printf("failed to allocate memory for the file %s\n", filename);
+        fclose(file);
+        exit(11);
+    }
+
+    fread(buffer, 1, *fileSize, file);
+    fclose(file);
+
+    return buffer;
+}
+
+VkShaderModule createShaderModule(VkDevice device, const char* code, size_t size)
+{
+    VkShaderModuleCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = size;
+    createInfo.pCode = (uint32_t*)code;
+
+    VkShaderModule shaderModule;
+    if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS)
+    {
+        printf("failed to create shader module!");
+        exit(12);
+    }
+
+    return shaderModule;
+}
+
+void createGraphicsPipeline(vk_Struct_t* app)
 {
     /*
      * The graphics pipeline in Vulkan is almost completely immutable,
@@ -787,8 +799,8 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     size_t fragShaderSize = 0;
     char* fragShaderCode = readFile("shaders/frag.spv", &fragShaderSize);
 
-    VkShaderModule vertShaderModule = createShaderModule(device, vertShaderCode, vertShaderSize);
-    VkShaderModule fragShaderModule = createShaderModule(device, fragShaderCode, fragShaderSize);
+    VkShaderModule vertShaderModule = createShaderModule(app->device, vertShaderCode, vertShaderSize);
+    VkShaderModule fragShaderModule = createShaderModule(app->device, fragShaderCode, fragShaderSize);
 
     VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -884,8 +896,8 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     VkViewport viewport = {};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = (float) swapChainExtent.width;
-    viewport.height = (float) swapChainExtent.height;
+    viewport.width = (float) app->swapChainExtent.width;
+    viewport.height = (float) app->swapChainExtent.height;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     
@@ -897,7 +909,7 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     VkRect2D scissor = {};
     scissor.offset.x = 0;
     scissor.offset.y = 0;
-    scissor.extent = swapChainExtent;
+    scissor.extent = app->swapChainExtent;
 
     /*
      * Viewport(s) and scissor rectangle(s) can either be specified as a static part
@@ -1024,7 +1036,7 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = NULL; // Optional
 
-    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, pipelineLayout) != VK_SUCCESS) {
+    if (vkCreatePipelineLayout(app->device, &pipelineLayoutInfo, NULL, &app->pipelineLayout) != VK_SUCCESS) {
         printf("failed to create pipeline layout!\n");
         exit(13);
     }
@@ -1041,14 +1053,14 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     pipelineInfo.pDepthStencilState = NULL; // Optional
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = *pipelineLayout;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.layout = app->pipelineLayout;
+    pipelineInfo.renderPass = app->renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
     pipelineInfo.basePipelineIndex = -1; // Optional
 
     /* Here is where the shaders are compile form spir-v to machine expecific instructions */
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, graphicsPipeline) != VK_SUCCESS) {
+    if (vkCreateGraphicsPipelines(app->device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &app->graphicsPipeline) != VK_SUCCESS) {
         printf("failed to create graphics pipeline!\n");
         exit(15);
     }
@@ -1056,29 +1068,27 @@ void createGraphicsPipeline(VkDevice device, VkExtent2D swapChainExtent, VkPipel
     /* cleanup */
     free(vertShaderCode);
     free(fragShaderCode);
-    vkDestroyShaderModule(device, vertShaderModule, NULL);
-    vkDestroyShaderModule(device, fragShaderModule, NULL);
+    vkDestroyShaderModule(app->device, vertShaderModule, NULL);
+    vkDestroyShaderModule(app->device, fragShaderModule, NULL);
 }
 
-void createFramebuffers(VkFramebuffer* swapChainFramebuffers, VkImageView* swapChainImageViews,
-                        const uint32_t swapChainImageViews_count, VkRenderPass renderPass,
-                        VkExtent2D swapChainExtent, VkDevice device)
+void createFramebuffers(vk_Struct_t* app)
 {
-    for (size_t i = 0; i < swapChainImageViews_count; i++) {
+    for (size_t i = 0; i < app->imageCount; i++) {
         VkImageView attachments[] = {
-            swapChainImageViews[i]
+            app->swapChainImageViews[i]
         };
 
         VkFramebufferCreateInfo framebufferInfo = {};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.renderPass = app->renderPass;
         framebufferInfo.attachmentCount = 1;
         framebufferInfo.pAttachments = attachments;
-        framebufferInfo.width = swapChainExtent.width;
-        framebufferInfo.height = swapChainExtent.height;
+        framebufferInfo.width = app->swapChainExtent.width;
+        framebufferInfo.height = app->swapChainExtent.height;
         framebufferInfo.layers = 1;
 
-        if (vkCreateFramebuffer(device, &framebufferInfo, NULL, &swapChainFramebuffers[i]) != VK_SUCCESS)
+        if (vkCreateFramebuffer(app->device, &framebufferInfo, NULL, &app->swapChainFramebuffers[i]) != VK_SUCCESS)
         {
             printf("failed to create framebuffer!\n");
             exit(16);
@@ -1086,7 +1096,7 @@ void createFramebuffers(VkFramebuffer* swapChainFramebuffers, VkImageView* swapC
     }
 }
 
-void createCommandPool(VkCommandPool* commandPool, VkPhysicalDevice physicalDevice, VkSurfaceKHR surface, VkDevice device)
+void createCommandPool(vk_Struct_t* app)
 {
     /*
      * Commands in Vulkan, like drawing operations and memory transfers, are not executed
@@ -1098,33 +1108,118 @@ void createCommandPool(VkCommandPool* commandPool, VkPhysicalDevice physicalDevi
      * happen in multiple threads if so desired.
      */
 
-    QueueFamilyIndices_t queueFamilyIndices = findQueueFamilies(physicalDevice, surface); // XD
+    QueueFamilyIndices_t queueFamilyIndices = findQueueFamilies(app->physicalDevice, app->surface); // XD
 
     VkCommandPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
 
-    if (vkCreateCommandPool(device, &poolInfo, NULL, commandPool) != VK_SUCCESS)
+    if (vkCreateCommandPool(app->device, &poolInfo, NULL, &app->commandPool) != VK_SUCCESS)
     {
         printf("failed to create command pool!\n");
         exit(17);
     }
 }
 
-void createCommandBuffer(VkCommandBuffer* commandBuffers ,VkCommandPool commandPool, VkDevice device)
+void createCommandBuffer(vk_Struct_t* app)
 {
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
+    allocInfo.commandPool = app->commandPool;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 2; // FIXME: MAX_FRAMES_IN_FLIGHT
+    allocInfo.commandBufferCount = app->MAX_FRAMES_IN_FLIGHT;
 
-    if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers) != VK_SUCCESS)
+    if (vkAllocateCommandBuffers(app->device, &allocInfo, app->commandBuffers) != VK_SUCCESS)
     {
         printf("failed to allocate command buffers!\n");
         exit(18);
     }
+}
+
+void createSyncObjects(vk_Struct_t* app)
+{
+    VkSemaphoreCreateInfo semaphoreInfo = {};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo = {};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Para no esperar indefinidamente la primera vez que se renderiza
+
+
+    for (int32_t i = 0; i < app->MAX_FRAMES_IN_FLIGHT; i++) {
+        if (vkCreateSemaphore(app->device, &semaphoreInfo, NULL, &app->imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(app->device, &semaphoreInfo, NULL, &app->renderFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(app->device, &fenceInfo, NULL, &app->inFlightFences[i]) != VK_SUCCESS)
+        {
+            printf("failed to create semaphores!");
+            exit(21);
+        }
+    }
+
+}
+
+void initVulkan(vk_Struct_t* app)
+{
+    app->window = create_window(app);
+
+    create_VkInstance(app);
+    createSurface(app);
+    pickPhysicalDevice(app);
+    createLogicalDevice(app);
+
+    createSwapChain(app);
+    vkGetSwapchainImagesKHR(app->device, app->swapChain, &app->imageCount, NULL); // NOTE: En la version original uso una query distinta para este imageCount
+    app->swapChainImages = malloc(sizeof(VkImage) * app->imageCount);
+    if (app->swapChainImages == NULL) {
+        printf("No se  ha podido alojar memoria para swapChainImages\n");
+        exit(1);
+    }
+    vkGetSwapchainImagesKHR(app->device, app->swapChain, &app->imageCount, app->swapChainImages);
+
+    app->swapChainImageViews = malloc(sizeof(VkImageView) * app->imageCount);
+    if (app->swapChainImageViews == NULL) {
+        printf("No se  ha podido alojar memoria para swapChainImageViews\n");
+        exit(1);
+    }
+    createImageViews(app);
+
+    createRenderPass(app);
+
+    createGraphicsPipeline(app);
+
+    app->swapChainFramebuffers = malloc(sizeof(VkFramebuffer) * app->imageCount);
+    if (app->swapChainFramebuffers == NULL) {
+        printf("No se  ha podido alojar memoria para swapChainFramebuffers\n");
+        exit(1);
+    }
+    createFramebuffers(app);
+
+    createCommandPool(app);
+
+    app->commandBuffers = malloc(sizeof(VkCommandBuffer) * app->MAX_FRAMES_IN_FLIGHT);
+    if (app->commandBuffers == NULL) {
+        printf("No se  ha podido alojar memoria para commandBuffers\n");
+        exit(1);
+    }
+    createCommandBuffer(app);
+
+    app->imageAvailableSemaphores = malloc(sizeof(VkSemaphore) * app->MAX_FRAMES_IN_FLIGHT);
+    if (app->commandBuffers == NULL) {
+        printf("No se  ha podido alojar memoria para imageAvailableSemaphores\n");
+        exit(1);
+    }
+    app->renderFinishedSemaphores = malloc(sizeof(VkSemaphore) * app->MAX_FRAMES_IN_FLIGHT);
+    if (app->commandBuffers == NULL) {
+        printf("No se  ha podido alojar memoria para renderFinishedSemaphores\n");
+        exit(1);
+    }
+    app->inFlightFences = malloc(sizeof(VkFence) * app->MAX_FRAMES_IN_FLIGHT);
+    if (app->commandBuffers == NULL) {
+        printf("No se  ha podido alojar memoria para inFlightFences\n");
+        exit(1);
+    }
+    createSyncObjects(app);
 }
 
 void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
@@ -1183,40 +1278,7 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
     }
 }
 
-void createSyncObjetcs(VkSemaphore* imageAvailableSemaphores, VkSemaphore* renderFinishedSemaphores,
-                       VkFence* inFlightFences, VkDevice device)
-{
-    VkSemaphoreCreateInfo semaphoreInfo = {};
-    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-    VkFenceCreateInfo fenceInfo = {};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Para no esperar indefinidamente la primera vez que se renderiza
-
-
-    for (uint32_t i = 0; i < 2; i++) { // FIXME: MAX_FRAMES_IN_FLIGHT
-        if (vkCreateSemaphore(device, &semaphoreInfo, NULL, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphoreInfo, NULL, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(device, &fenceInfo, NULL, &inFlightFences[i]) != VK_SUCCESS)
-        {
-            printf("failed to create semaphores!");
-            exit(21);
-        }
-    }
-
-}
-
-void drawFrame(VkDevice device,
-               VkFence* inFlightFences, // No se si pasarlo como pointer
-               VkSemaphore* imageAvailableSemaphores, // No se si pasarlo como pointer
-               VkSemaphore* renderFinishedSemaphores, // No se si pasarlo como pointer
-               VkSwapchainKHR swapChain,
-               VkCommandBuffer* commandBuffers,
-               VkRenderPass renderPass,
-               VkFramebuffer* framebuffers,
-               VkExtent2D extent,
-               VkPipeline pipeline,
-               VkQueue graphicsQueue)
+void drawFrame(vk_Struct_t* app)
 {
     /*
      * At a high level, rendering a frame in Vulkan consists of a common set of steps:
@@ -1229,32 +1291,32 @@ void drawFrame(VkDevice device,
 
     uint32_t currentFrame = 0;
 
-    vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFences[currentFrame]);
+    vkWaitForFences(app->device, 1, &app->inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    vkResetFences(app->device, 1, &app->inFlightFences[currentFrame]);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    vkAcquireNextImageKHR(app->device, app->swapChain, UINT64_MAX, app->imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-    vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-    recordCommandBuffer(commandBuffers[currentFrame], imageIndex, renderPass, framebuffers, extent, pipeline);
+    vkResetCommandBuffer(app->commandBuffers[currentFrame], 0);
+    recordCommandBuffer(app->commandBuffers[currentFrame], imageIndex, app->renderPass, app->swapChainFramebuffers, app->swapChainExtent, app->graphicsPipeline);
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
+    submitInfo.pCommandBuffers = &app->commandBuffers[currentFrame];
 
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    VkSemaphore waitSemaphores[] = {app->imageAvailableSemaphores[currentFrame]};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = commandBuffers;
+    submitInfo.pCommandBuffers = app->commandBuffers;
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    VkSemaphore signalSemaphores[] = {app->renderFinishedSemaphores[currentFrame]};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
+    if (vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, app->inFlightFences[currentFrame]) != VK_SUCCESS)
     {
         printf("failed to submit draw command buffer!\n");
         exit(22);
@@ -1265,131 +1327,94 @@ void drawFrame(VkDevice device,
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
 
-    VkSwapchainKHR swapChains[] = {swapChain};
+    VkSwapchainKHR swapChains[] = {app->swapChain};
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL; // Optional
-    vkQueuePresentKHR(graphicsQueue, &presentInfo);
+    vkQueuePresentKHR(app->graphicsQueue, &presentInfo);
 
-    currentFrame = (currentFrame + 1) % 2; // FIXME: MAX_FRAMES_IN_FLIGHT
+    currentFrame = (currentFrame + 1) % app->MAX_FRAMES_IN_FLIGHT;
 }
 
-void mainLoop(GLFWwindow* window,
-              VkDevice device,
-              VkFence* inFlightFences, // No se si pasarlo como pointer
-              VkSemaphore* imageAvailableSemaphores, // No se si pasarlo como pointer
-              VkSemaphore* renderFinishedSemaphores, // No se si pasarlo como pointer
-              VkSwapchainKHR swapChain,
-              VkCommandBuffer* commandBuffers,
-              VkRenderPass renderPass,
-              VkFramebuffer* framebuffers,
-              VkExtent2D extent,
-              VkPipeline pipeline,
-              VkQueue graphicsQueue)
+void mainLoop(vk_Struct_t* app)
 {
-    while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(app->window)) {
         glfwPollEvents();
-        drawFrame(device, inFlightFences,
-                  imageAvailableSemaphores, renderFinishedSemaphores,
-                  swapChain, commandBuffers, renderPass,
-                  framebuffers, extent, pipeline, graphicsQueue);
+        drawFrame(app);
     }
 
-    vkDeviceWaitIdle(device);
+    vkDeviceWaitIdle(app->device);
 }
 
-/* TODO: ENUM for error for exit() */
+void cleanup(vk_Struct_t* app)
+{
+    for (size_t i = 0; i < 2; i++) {
+        vkDestroySemaphore(app->device, app->renderFinishedSemaphores[i], NULL);
+        vkDestroySemaphore(app->device, app->imageAvailableSemaphores[i], NULL);
+        vkDestroyFence(app->device, app->inFlightFences[i], NULL);
+    }
+
+    vkDestroyCommandPool(app->device, app->commandPool, NULL);
+
+    for (uint32_t i = 0; i < app->imageCount; i++)
+    {
+        vkDestroyFramebuffer(app->device, app->swapChainFramebuffers[i], NULL);
+    }
+
+    vkDestroyPipeline(app->device, app->graphicsPipeline, NULL);
+    vkDestroyPipelineLayout(app->device, app->pipelineLayout, NULL);
+    vkDestroyRenderPass(app->device, app->renderPass, NULL);
+
+    for (uint32_t i = 0; i < app->imageCount; i++)
+    {
+        vkDestroyImageView(app->device, app->swapChainImageViews[i], NULL);
+    }
+
+    vkDestroySwapchainKHR(app->device, app->swapChain, NULL);
+
+    vkDestroyDevice(app->device, NULL);
+
+    vkDestroySurfaceKHR(app->instance, app->surface, NULL);
+
+    vkDestroyInstance(app->instance, NULL);
+
+    glfwDestroyWindow(app->window);
+
+    glfwTerminate();
+
+    // TODO: No se si tengo que free() los mallocs que hago en initVulkan
+}
+
 int main(void)
 {
-
-    const uint32_t WIDTH = 800;
-    const uint32_t HEIGHT = 600;
-
-    const int MAX_FRAMES_IN_FLIGHT = 2;
-
-    const char* validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
-    const uint32_t validationLayers_count = 1;
-
-    const char* deviceExtensions[] = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME // Its a fucking macro, no a string WTF?????
-    };
-    const uint32_t deviceExtensions_count = 1;
-
+    vk_Struct_t App = {
+        .WIDTH = 800,
+        .HEIGHT = 600,
+        .MAX_FRAMES_IN_FLIGHT = 2,
+        .validationLayers_count = 1,
+        .validationLayers = malloc(sizeof(const char*) * 1),
 #ifdef NDEBUG
-    const bool enableValidationLayers = false;
+        .enableValidationLayers = false,
 #else
-    const bool enableValidationLayers = true;
+        .enableValidationLayers = true,
 #endif
+        .deviceExtensions = malloc(sizeof(const char*) * 1),
+        .deviceExtensions_count = 1,
+    };
 
-    GLFWwindow* window = create_window(WIDTH, HEIGHT);
+    if (App.validationLayers == NULL) {
+        printf("No se ha popido alojar memoria para las validationLayers\n");
+        return 1;
+    }
+    App.validationLayers[0] = "VK_LAYER_KHRONOS_validation";
+    App.deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME; // Its a fucking macro, no a string WTF?????
 
-    /* TODO: figure out the API, todo esto es initVulkan() en el tuto */
-    VkInstance instance;
-    create_VkInstance(&instance, validationLayers, validationLayers_count, enableValidationLayers);
+    initVulkan(&App);
 
-    VkSurfaceKHR surface;
-    createSurface(instance, window, &surface);
+    mainLoop(&App);
 
-    VkPhysicalDevice physicalDevice = pickPhysicalDevice(instance, surface, deviceExtensions, deviceExtensions_count);
-
-    VkQueue graphicsQueue = {};
-    VkDevice device = createLogicalDevice(physicalDevice, &graphicsQueue, surface, deviceExtensions, deviceExtensions_count);
-
-    /* Creacion de la swapchain */
-    struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice, surface);
-    VkFormat swapChainImageFormat = {};
-    VkExtent2D swapChainExtent = {};
-
-    VkSwapchainKHR swapChain = {};
-    createSwapChain(&swapChain, physicalDevice, surface, window, device, &swapChainImageFormat, &swapChainExtent);
-
-    uint32_t imageCount = swapChainSupport.capabilities.minImageCount;
-    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, NULL);
-    VkImage swapChainImages[imageCount];
-    vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages);
-    /* Fin de la creacion de la swapchain */
-
-    /* Creacion de las images views */
-    VkImageView swapChainImageViews[imageCount];
-    createImageViews(swapChainImages, imageCount, swapChainImageFormat, swapChainImageViews, device);
-
-    /* Creacion del Render Pass */
-    VkRenderPass renderPass;
-    createRenderPass(&renderPass, swapChainImageFormat, device);
-
-    /* Creacion de la Graphics Pipeline */
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
-    createGraphicsPipeline(device, swapChainExtent, &pipelineLayout, &graphicsPipeline, renderPass);
-
-    VkFramebuffer swapChainFramebuffers[imageCount];
-    createFramebuffers(swapChainFramebuffers, swapChainImageViews, imageCount, renderPass, swapChainExtent, device);
-
-    VkCommandPool commandPool;
-    createCommandPool(&commandPool, physicalDevice, surface, device);
-
-    VkCommandBuffer commandBuffers[MAX_FRAMES_IN_FLIGHT] = {};
-    createCommandBuffer(commandBuffers, commandPool, device);
-
-    VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {}; // In GPU
-    VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {}; // In GPU
-    VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT] = {}; // In CPU
-    createSyncObjetcs(imageAvailableSemaphores, renderFinishedSemaphores,
-                      inFlightFences, device);
-
-    mainLoop(window, device,
-             inFlightFences, imageAvailableSemaphores,
-             renderFinishedSemaphores, swapChain,
-             commandBuffers, renderPass,
-             swapChainFramebuffers, swapChainExtent,
-             graphicsPipeline, graphicsQueue);
-
-    cleanup(window, instance, device, surface, swapChain,
-            swapChainImageViews, imageCount, pipelineLayout,
-            renderPass, graphicsPipeline, swapChainFramebuffers,
-            commandPool, imageAvailableSemaphores,
-            renderFinishedSemaphores, inFlightFences);
+    cleanup(&App);
 
     return 0;
 }
