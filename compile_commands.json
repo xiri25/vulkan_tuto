@@ -1,0 +1,19 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-O2",
+      "-Icglmlib/include",
+      "-g",
+      "-o",
+      "vulkan",
+      "main.c"
+    ],
+    "directory": "/home/xiri/repos/vulkan_tuto",
+    "file": "/home/xiri/repos/vulkan_tuto/main.c",
+    "output": "/home/xiri/repos/vulkan_tuto/vulkan"
+  }
+]

@@ -1,6 +1,7 @@
-#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+#include <cglm/cglm.h>
 
 #include <stdio.h>
 #include <stdlib.h>

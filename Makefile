@@ -8,7 +8,7 @@ SRC_FILES=main.c
 all: vulkan
 
 vulkan: $(SRC_FILES)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -Icglmlib/include -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f vulkan
