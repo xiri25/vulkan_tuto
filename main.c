@@ -1,3 +1,5 @@
+#include <stddef.h>
+#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -60,8 +62,80 @@ typedef struct vk_Struct {
     VkSemaphore* renderFinishedSemaphores;
     VkFence* inFlightFences;
     bool framebufferResized;
+
+    VkBuffer vertexBuffer;
+    uint64_t vertexBuffer_size;
+    VkDeviceMemory vertexBufferMemory;
+
+    void* vertices; // FIXME: Dont do it like this pls, no se como lo esta haciendo
 } vk_Struct_t;
 
+struct Vertex {
+    vec2 pos;
+    vec3 color;
+};
+
+// NOTE: I dont like this
+static VkVertexInputBindingDescription getBindingDescription()
+{
+    /*
+     * A vertex binding describes at which rate to load data from memory
+     * throughout the vertices. It specifies the number of bytes between
+     * data entries and whether to move to the next data entry after each
+     * vertex or after each instance.
+     *
+     * All of our per-vertex data is packed together in one array, so
+     * we’re only going to have one binding. The binding parameter
+     * specifies the index of the binding in the array of bindings.
+     * The stride parameter specifies the number of bytes from one
+     * entry to the next, and the inputRate parameter can have one
+     * of the following values:
+     *
+     * VK_VERTEX_INPUT_RATE_VERTEX: Move to the next data entry after each vertex
+     * VK_VERTEX_INPUT_RATE_INSTANCE: Move to the next data entry after each instance
+     *
+     * We’re not going to use instanced rendering, so we’ll stick to per-vertex data.
+     */
+    VkVertexInputBindingDescription result = {};
+    result.binding = 0;
+    result.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    result.stride = sizeof(struct Vertex);
+
+    return result;
+}
+
+static VkVertexInputAttributeDescription* getAttributeDescriptions()
+{
+    VkVertexInputAttributeDescription* result = malloc(sizeof(VkVertexInputAttributeDescription) * 2);
+    result[0].location = 0;
+    result[0].binding = 0;
+    result[0].format = VK_FORMAT_R32G32_SFLOAT;
+    result[0].offset = offsetof(struct Vertex, pos);
+
+    result[1].location = 1;
+    result[1].binding = 0;
+    result[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    result[1].offset = offsetof(struct Vertex, color);
+
+    return result;
+}
+
+/*
+static struct VkVertexInputAttributeDescription_2 getAttributeDescriptions() {
+    struct VkVertexInputAttributeDescription_2 result = {};
+    result.pos.location = 0;
+    result.pos.binding = 0;
+    result.pos.format = VK_FORMAT_R32G32_SFLOAT;
+    result.pos.offset = offsetof(struct Vertex, pos);
+
+    result.color.location = 1;
+    result.color.binding = 0;
+    result.color.format = VK_FORMAT_R32G32B32_SFLOAT;
+    result.color.offset = offsetof(struct Vertex, color);
+
+    return result;
+}
+*/
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
@@ -890,13 +964,15 @@ void createGraphicsPipeline(vk_Struct_t* app)
         load for now. We’ll get back to it in the vertex buffer chapter.
      */
 
+    VkVertexInputBindingDescription bindingDescription = getBindingDescription();
+    VkVertexInputAttributeDescription* attributeDescriptions = getAttributeDescriptions();
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = NULL; // Optional
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = NULL; // Optional
-
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = 2;
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
     /* Input Assembly */
     VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
@@ -1086,6 +1162,7 @@ void createGraphicsPipeline(vk_Struct_t* app)
     /* cleanup */
     free(vertShaderCode);
     free(fragShaderCode);
+    free(attributeDescriptions);
     vkDestroyShaderModule(app->device, vertShaderModule, NULL);
     vkDestroyShaderModule(app->device, fragShaderModule, NULL);
 }
@@ -1177,6 +1254,115 @@ void createSyncObjects(vk_Struct_t* app)
 
 }
 
+uint32_t findMemoryType(vk_Struct_t* app, uint32_t typeFilter, VkMemoryPropertyFlags properties)
+{
+    /*
+     * Graphics cards can offer different types of memory to allocate from.
+     * Each type of memory varies in terms of allowed operations and performance
+     * characteristics. We need to combine the requirements of the buffer and our
+     * own application requirements to find the right type of memory to use.
+     */
+
+    VkPhysicalDeviceMemoryProperties memProperties = {};
+    vkGetPhysicalDeviceMemoryProperties(app->physicalDevice, &memProperties);
+
+    /*
+     * The VkPhysicalDeviceMemoryProperties structure has two arrays memoryTypes
+     * and memoryHeaps. Memory heaps are distinct memory resources like dedicated
+     * VRAM and swap space in RAM for when VRAM runs out. The different types of
+     * memory exist within these heaps. Right now we’ll only concern ourselves
+     * with the type of memory and not the heap it comes from, but you can
+     * imagine that this can affect performance.
+     */
+
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    printf("failed to find suitable memory type!\n");
+    exit(25);
+}
+
+void createVertexBuffer(vk_Struct_t* app)
+{
+    /*
+     * Unlike the Vulkan objects we’ve been dealing
+     * with so far, buffers do not automatically
+     * allocate memory for themselves
+     */
+
+    VkBufferCreateInfo bufferInfo = {}; // TODO: Mejorar esta inicializacion
+    //bufferInfo.flags = {};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = app->vertexBuffer_size; // TODO: better way?
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    vkCreateBuffer(app->device, &bufferInfo, NULL, &app->vertexBuffer);
+
+    /*
+     * The buffer has been created, but it doesn’t have any memory assigned
+     * to it yet. The first step of allocating memory for the buffer is
+     * to query its memory requirements using the aptly named
+     * vkGetBufferMemoryRequirements function
+     */
+
+    VkMemoryRequirements memRequirements = {};
+    vkGetBufferMemoryRequirements(app->device, app->vertexBuffer, &memRequirements);
+
+    VkMemoryAllocateInfo memoryAllocateInfo = {};
+    memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memoryAllocateInfo.allocationSize = memRequirements.size;
+    memoryAllocateInfo.memoryTypeIndex = findMemoryType(app, memRequirements.memoryTypeBits, (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) );
+
+    VkResult result = vkAllocateMemory(app->device, &memoryAllocateInfo, NULL, &app->vertexBufferMemory);
+    if (result != VK_SUCCESS) {
+        printf("No se hga popido alojar memoria para el vertexBuffer\n");
+        exit(26);
+    }
+
+    /*
+     * The first three parameters are self-explanatory, and the fourth parameter is
+     * the offset within the region of memory. Since this memory is allocated
+     * specifically for this the vertex buffer, the offset is simply 0.
+     * If the offset is non-zero, then it is required to be divisible by memRequirements.alignment.
+     */
+    vkBindBufferMemory(app->device, app->vertexBuffer, app->vertexBufferMemory, 0);
+
+    void *data;
+    vkMapMemory(app->device, app->vertexBufferMemory, 0, app->vertexBuffer_size, (VkMemoryMapFlags)0, &data);
+    memcpy(data, app->vertices, bufferInfo.size);
+
+    // NOTE: I dont understand this
+    vkUnmapMemory(app->device, app->vertexBufferMemory);
+    
+    /*
+     * You can now simply memcpy the vertex data to the mapped memory
+     * and unmap it again using vkUnmapMemory. Unfortunately, the driver
+     * may not immediately copy the data into the buffer memory,
+     * for example, because of caching. It is also possible that writes
+     * to the buffer are not visible in the mapped memory yet. There
+     * are two ways to deal with that problem:
+     *
+     * Use a memory heap that is host coherent, indicated with VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+     * Call vkFlushMappedMemoryRanges after writing to the mapped memory,
+     * and call vkInvalidateMappedMemoryRanges before reading from the mapped memory
+     * We went for the first approach, which ensures that the mapped memory always
+     * matches the contents of the allocated memory. Do keep in mind that this may lead to
+     * slightly worse performance than explicit flushing, but we’ll see why that doesn’t matter in the next chapter.
+     *
+     *
+     * Flushing memory ranges or using a coherent memory heap means
+     * that the driver will be aware of our writings to the buffer,
+     * but it doesn’t mean that they are actually visible on the GPU
+     * yet. The transfer of data to the GPU is an operation that
+     * happens in the background, and the specification simply tells
+     * us that it is guaranteed to be complete as of the next call to vkQueueSubmit.
+     */
+}
+
 void initVulkan(vk_Struct_t* app)
 {
     app->window = create_window(app);
@@ -1215,6 +1401,8 @@ void initVulkan(vk_Struct_t* app)
 
     createCommandPool(app);
 
+    createVertexBuffer(app);
+
     app->commandBuffers = malloc(sizeof(VkCommandBuffer) * app->MAX_FRAMES_IN_FLIGHT);
     if (app->commandBuffers == NULL) {
         printf("No se  ha podido alojar memoria para commandBuffers\n");
@@ -1240,16 +1428,14 @@ void initVulkan(vk_Struct_t* app)
     createSyncObjects(app);
 }
 
-void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
-                         VkRenderPass renderPass, VkFramebuffer* swapChainFramebuffers,
-                         VkExtent2D swapChainExtent, VkPipeline graphicsPipeline)
+void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t currentFrame)
 {
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0; // Optional
     beginInfo.pInheritanceInfo = NULL; // Optional
 
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+    if (vkBeginCommandBuffer(app->commandBuffers[currentFrame], &beginInfo) != VK_SUCCESS)
     {
         printf("failed to begin recording command buffer!\n");
         exit(19);
@@ -1257,39 +1443,43 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
 
     VkRenderPassBeginInfo renderPassInfo = {};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+    renderPassInfo.renderPass = app->renderPass;
+    renderPassInfo.framebuffer = app->swapChainFramebuffers[imageIndex];
     renderPassInfo.renderArea.offset.x = 0;
     renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = swapChainExtent;
+    renderPassInfo.renderArea.extent = app->swapChainExtent;
 
     VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearColor;
 
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    vkCmdBeginRenderPass(app->commandBuffers[currentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline);
 
     VkViewport viewport = {};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = (float)(swapChainExtent.width);
-    viewport.height = (float)(swapChainExtent.height);
+    viewport.width = (float)(app->swapChainExtent.width);
+    viewport.height = (float)(app->swapChainExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    vkCmdSetViewport(app->commandBuffers[currentFrame], 0, 1, &viewport);
 
     VkRect2D scissor = {};
     scissor.offset.x = 0;
     scissor.offset.y = 0;
-    scissor.extent = swapChainExtent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    scissor.extent = app->swapChainExtent;
+    vkCmdSetScissor(app->commandBuffers[currentFrame], 0, 1, &scissor);
 
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline);
 
-    vkCmdEndRenderPass(commandBuffer);
+    vkCmdBindVertexBuffers(app->commandBuffers[currentFrame], 0, 1, &app->vertexBuffer, (VkDeviceSize[]) {0});
 
-    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+    vkCmdDraw(app->commandBuffers[currentFrame], 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(app->commandBuffers[currentFrame]);
+
+    if (vkEndCommandBuffer(app->commandBuffers[currentFrame]) != VK_SUCCESS)
     {
         printf("failed to record command buffer!\n");
         exit(20);
@@ -1359,7 +1549,7 @@ void drawFrame(vk_Struct_t* app)
     vkResetFences(app->device, 1, &app->inFlightFences[currentFrame]);
 
     vkResetCommandBuffer(app->commandBuffers[currentFrame], 0);
-    recordCommandBuffer(app->commandBuffers[currentFrame], imageIndex, app->renderPass, app->swapChainFramebuffers, app->swapChainExtent, app->graphicsPipeline);
+    recordCommandBuffer(app, imageIndex, currentFrame);
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1479,6 +1669,15 @@ int main(void)
     }
     App.validationLayers[0] = "VK_LAYER_KHRONOS_validation";
     App.deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME; // Its a fucking macro, no a string WTF?????
+
+    const struct Vertex vertices[3] = {
+        {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    };
+
+    App.vertexBuffer_size = sizeof(vertices[0]) * 3;
+    App.vertices = (void*)&vertices[0];
 
     initVulkan(&App);
 
