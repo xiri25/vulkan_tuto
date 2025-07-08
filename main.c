@@ -58,7 +58,20 @@ typedef struct vk_Struct {
     VkSemaphore* imageAvailableSemaphores;
     VkSemaphore* renderFinishedSemaphores;
     VkFence* inFlightFences;
+    bool framebufferResized;
 } vk_Struct_t;
+
+
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
+{
+    //XD
+    (void)width;
+    (void)height;
+
+
+    vk_Struct_t* app = (vk_Struct_t*)(glfwGetWindowUserPointer(window)); // XDDDDDDD
+    app->framebufferResized = true;
+}
 
 GLFWwindow* create_window(vk_Struct_t* app)
 {
@@ -68,9 +81,13 @@ GLFWwindow* create_window(vk_Struct_t* app)
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-    return glfwCreateWindow(width, height, "Vulkan", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(width, height, "Vulkan", NULL, NULL);
+    glfwSetWindowUserPointer(window, app); // TODO: IDK
+    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
+    return window;
 }
 
 
@@ -1278,6 +1295,40 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
     }
 }
 
+void cleanupSwapChain(vk_Struct_t* app)
+{
+    for (uint32_t i = 0; i < app->imageCount; i++) {
+        app->swapChainImageViews[i] = NULL;
+    }
+
+    app->swapChain = NULL;
+}
+
+void recreateSwapChain(vk_Struct_t* app)
+{
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(app->window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(app->window, &width, &height);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(app->device);
+
+    cleanupSwapChain(app);
+    /*
+     * Note that we don’t recreate the renderpass here for simplicity.
+     * In theory, it can be possible for the swap chain image format
+     * to change during an applications' lifetime, e.g., when moving
+     * a window from a standard range to a high dynamic range monitor.
+     * This may require the application to recreate the renderpass
+     * to make sure the change between dynamic ranges is properly reflected.
+     */
+
+    createSwapChain(app);
+    createImageViews(app);
+}
+
 void drawFrame(vk_Struct_t* app)
 {
     /*
@@ -1292,10 +1343,19 @@ void drawFrame(vk_Struct_t* app)
     uint32_t currentFrame = 0;
 
     vkWaitForFences(app->device, 1, &app->inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-    vkResetFences(app->device, 1, &app->inFlightFences[currentFrame]);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(app->device, app->swapChain, UINT64_MAX, app->imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    VkResult result = vkAcquireNextImageKHR(app->device, app->swapChain, UINT64_MAX, app->imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapChain(app);
+        return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        printf("failed to acquire swap chain image!");
+        exit(23);
+    }
+     
+    /* Only reset the fence if we are submitting work */
+    vkResetFences(app->device, 1, &app->inFlightFences[currentFrame]);
 
     vkResetCommandBuffer(app->commandBuffers[currentFrame], 0);
     recordCommandBuffer(app->commandBuffers[currentFrame], imageIndex, app->renderPass, app->swapChainFramebuffers, app->swapChainExtent, app->graphicsPipeline);
@@ -1332,7 +1392,15 @@ void drawFrame(vk_Struct_t* app)
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL; // Optional
-    vkQueuePresentKHR(app->graphicsQueue, &presentInfo);
+
+    result = vkQueuePresentKHR(app->graphicsQueue, &presentInfo);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        app->framebufferResized = false;
+        recreateSwapChain(app);
+    } else if (result != VK_SUCCESS) {
+        printf("failed to present swap chain image!\n");
+        exit(24);
+    }
 
     currentFrame = (currentFrame + 1) % app->MAX_FRAMES_IN_FLIGHT;
 }
@@ -1401,6 +1469,7 @@ int main(void)
 #endif
         .deviceExtensions = malloc(sizeof(const char*) * 1),
         .deviceExtensions_count = 1,
+        .framebufferResized = false,
     };
 
     if (App.validationLayers == NULL) {
