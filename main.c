@@ -67,6 +67,11 @@ typedef struct vk_Struct {
     uint64_t vertexBuffer_size;
     VkDeviceMemory vertexBufferMemory;
 
+    // NO me queda claro si es esto lo que hace...
+    VkBuffer stagingBuffer;
+    uint64_t stagingBuffer_size;
+    VkDeviceMemory stagingBufferMemory;
+    
     void* vertices; // FIXME: Dont do it like this pls, no se como lo esta haciendo
 } vk_Struct_t;
 
@@ -1285,7 +1290,12 @@ uint32_t findMemoryType(vk_Struct_t* app, uint32_t typeFilter, VkMemoryPropertyF
     exit(25);
 }
 
-void createVertexBuffer(vk_Struct_t* app)
+void createBuffer(vk_Struct_t* app,
+                  VkDeviceSize size,
+                  VkBufferUsageFlags usage,
+                  VkMemoryPropertyFlags properties,
+                  VkBuffer* buffer,
+                  VkDeviceMemory* bufferMemory)
 {
     /*
      * Unlike the Vulkan objects we’ve been dealing
@@ -1296,11 +1306,11 @@ void createVertexBuffer(vk_Struct_t* app)
     VkBufferCreateInfo bufferInfo = {}; // TODO: Mejorar esta inicializacion
     //bufferInfo.flags = {};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = app->vertexBuffer_size; // TODO: better way?
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    vkCreateBuffer(app->device, &bufferInfo, NULL, &app->vertexBuffer);
+    vkCreateBuffer(app->device, &bufferInfo, NULL, buffer);
 
     /*
      * The buffer has been created, but it doesn’t have any memory assigned
@@ -1310,14 +1320,14 @@ void createVertexBuffer(vk_Struct_t* app)
      */
 
     VkMemoryRequirements memRequirements = {};
-    vkGetBufferMemoryRequirements(app->device, app->vertexBuffer, &memRequirements);
+    vkGetBufferMemoryRequirements(app->device, *buffer, &memRequirements);
 
     VkMemoryAllocateInfo memoryAllocateInfo = {};
     memoryAllocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     memoryAllocateInfo.allocationSize = memRequirements.size;
-    memoryAllocateInfo.memoryTypeIndex = findMemoryType(app, memRequirements.memoryTypeBits, (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) );
+    memoryAllocateInfo.memoryTypeIndex = findMemoryType(app, memRequirements.memoryTypeBits, properties);
 
-    VkResult result = vkAllocateMemory(app->device, &memoryAllocateInfo, NULL, &app->vertexBufferMemory);
+    VkResult result = vkAllocateMemory(app->device, &memoryAllocateInfo, NULL, bufferMemory);
     if (result != VK_SUCCESS) {
         printf("No se hga popido alojar memoria para el vertexBuffer\n");
         exit(26);
@@ -1329,15 +1339,107 @@ void createVertexBuffer(vk_Struct_t* app)
      * specifically for this the vertex buffer, the offset is simply 0.
      * If the offset is non-zero, then it is required to be divisible by memRequirements.alignment.
      */
-    vkBindBufferMemory(app->device, app->vertexBuffer, app->vertexBufferMemory, 0);
+    vkBindBufferMemory(app->device, *buffer, *bufferMemory, 0);
+}
 
-    void *data;
-    vkMapMemory(app->device, app->vertexBufferMemory, 0, app->vertexBuffer_size, (VkMemoryMapFlags)0, &data);
-    memcpy(data, app->vertices, bufferInfo.size);
+void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+{
+    /*
+     * Memory transfer operations are executed using command buffers,
+     * just like drawing commands. Therefore we must first allocate
+     * a temporary command buffer. You may wish to create a separate
+     * command pool for these kinds of short-lived buffers, because
+     * the implementation may be able to apply memory allocation
+     * optimizations. You should use the VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
+     * flag during command pool generation in that case.
+     */
 
-    // NOTE: I dont understand this
-    vkUnmapMemory(app->device, app->vertexBufferMemory);
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.commandPool = app->commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+
+    VkCommandBuffer commandCopyBuffer;
+    vkAllocateCommandBuffers(app->device, &allocInfo, &commandCopyBuffer);
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(commandCopyBuffer, &beginInfo);
+    VkBufferCopy bufferCopy = {};
+    bufferCopy.srcOffset = 0;
+    bufferCopy.dstOffset = 0;
+    bufferCopy.size = size;
+    vkCmdCopyBuffer(commandCopyBuffer, srcBuffer, dstBuffer, 1, &bufferCopy);
+
+    vkEndCommandBuffer(commandCopyBuffer);
+
+    // Execute the cmd buffer
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandCopyBuffer;
+    vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, NULL);
+
+    vkQueueWaitIdle(app->graphicsQueue);
     
+    /*
+     * Unlike the draw commands, there are no events we
+     * need to wait on this time. We just want to execute
+     * the transfer on the buffers immediately. There are
+     * again two possible ways to wait on this transfer
+     * to complete. We could use a fence and wait with
+     * vkWaitForFences, or simply wait for the transfer
+     * queue to become idle with vkQueueWaitIdle. A
+     * fence would allow you to schedule multiple transfers
+     * simultaneously and wait for all of them complete,
+     * instead of executing one at a time.
+     * That may give the driver more opportunities to optimize.
+     */
+}
+
+void createVertexBuffer(vk_Struct_t* app)
+{
+    /*
+     * The vertex buffer we have right now works correctly,
+     * but the memory type that allows us to access it from
+     * the CPU may not be the most optimal memory type for
+     * the graphics card itself to read from. The most
+     * optimal memory has the VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+     * flag and is usually not accessible by the CPU on dedicated
+     * graphics cards. In this chapter, we’re going to create two
+     * vertex buffers. One staging buffer in CPU accessible
+     * memory to upload the data from the vertex array to,
+     * and the final vertex buffer in device local memory.
+     * We’ll then use a buffer copy command to move the
+     * data from the staging buffer to the actual vertex buffer.
+     */
+
+    VkDeviceSize bufferSize = app->vertexBuffer_size;
+
+    app->stagingBuffer_size = bufferSize;
+    createBuffer(app,
+                 app->stagingBuffer_size,
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT, // TODO: Sharing mode exclusive, maybe not a default of createBUffer ???
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &app->stagingBuffer,
+                 &app->stagingBufferMemory);
+    // Buffer is already bind
+    void* dataStaging;
+    vkMapMemory(app->device, app->stagingBufferMemory, 0, bufferSize, (VkMemoryMapFlags)0 , &dataStaging);
+    memcpy(dataStaging, app->vertices, (size_t)bufferSize);
+    vkUnmapMemory(app->device, app->stagingBufferMemory);
+
+    createBuffer(app,
+                 bufferSize,
+                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 &app->vertexBuffer,
+                 &app->vertexBufferMemory);
+    // Buffer is already bind
+    copyBuffer(app, app->stagingBuffer, app->vertexBuffer, bufferSize);
+
     /*
      * You can now simply memcpy the vertex data to the mapped memory
      * and unmap it again using vkUnmapMemory. Unfortunately, the driver
@@ -1352,7 +1454,6 @@ void createVertexBuffer(vk_Struct_t* app)
      * We went for the first approach, which ensures that the mapped memory always
      * matches the contents of the allocated memory. Do keep in mind that this may lead to
      * slightly worse performance than explicit flushing, but we’ll see why that doesn’t matter in the next chapter.
-     *
      *
      * Flushing memory ranges or using a coherent memory heap means
      * that the driver will be aware of our writings to the buffer,
