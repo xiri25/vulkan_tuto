@@ -1,5 +1,3 @@
-#include <stddef.h>
-#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -10,6 +8,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
