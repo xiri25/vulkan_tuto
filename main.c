@@ -67,12 +67,17 @@ typedef struct vk_Struct {
     uint64_t vertexBuffer_size;
     VkDeviceMemory vertexBufferMemory;
 
+    VkBuffer indexBuffer;
+    uint64_t indexBuffer_size;
+    VkDeviceMemory indexBufferMemory;
+
     // NO me queda claro si es esto lo que hace...
     VkBuffer stagingBuffer;
     uint64_t stagingBuffer_size;
     VkDeviceMemory stagingBufferMemory;
     
     void* vertices; // FIXME: Dont do it like this pls, no se como lo esta haciendo
+    void* indices;
 } vk_Struct_t;
 
 struct Vertex {
@@ -1464,6 +1469,32 @@ void createVertexBuffer(vk_Struct_t* app)
      */
 }
 
+void createIndexBuffer(vk_Struct_t* app)
+{
+    VkDeviceSize bufferSize = app->indexBuffer_size;
+
+    VkBuffer stagingBuffer = {};
+    VkDeviceMemory stagingBufferMemory = {};
+    createBuffer(app,
+                 bufferSize,
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &stagingBuffer,
+                 &stagingBufferMemory);
+    void* data;
+    vkMapMemory(app->device, stagingBufferMemory, 0, bufferSize, (VkMemoryMapFlags)0 , &data);
+    memcpy(data, app->indices, (size_t)bufferSize);
+
+    createBuffer(app,
+                 bufferSize,
+                 VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                 &app->indexBuffer,
+                 &app->indexBufferMemory);
+
+    copyBuffer(app, stagingBuffer, app->indexBuffer, bufferSize);
+}
+
 void initVulkan(vk_Struct_t* app)
 {
     app->window = create_window(app);
@@ -1503,6 +1534,7 @@ void initVulkan(vk_Struct_t* app)
     createCommandPool(app);
 
     createVertexBuffer(app);
+    createIndexBuffer(app);
 
     app->commandBuffers = malloc(sizeof(VkCommandBuffer) * app->MAX_FRAMES_IN_FLIGHT);
     if (app->commandBuffers == NULL) {
@@ -1575,8 +1607,13 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
     vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline);
 
     vkCmdBindVertexBuffers(app->commandBuffers[currentFrame], 0, 1, &app->vertexBuffer, (VkDeviceSize[]) {0});
+    vkCmdBindIndexBuffer(app->commandBuffers[currentFrame], app->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdDraw(app->commandBuffers[currentFrame], 3, 1, 0, 0);
+    //vkCmdDraw(app->commandBuffers[currentFrame], 3, 1, 0, 0);
+    vkCmdDrawIndexed(app->commandBuffers[currentFrame],
+                     (app->indexBuffer_size / sizeof(uint16_t)),
+                     1, // We are not using instancing
+                     0, 0, 0);
 
     vkCmdEndRenderPass(app->commandBuffers[currentFrame]);
 
@@ -1771,14 +1808,22 @@ int main(void)
     App.validationLayers[0] = "VK_LAYER_KHRONOS_validation";
     App.deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME; // Its a fucking macro, no a string WTF?????
 
-    const struct Vertex vertices[3] = {
-        {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-        {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    const struct Vertex vertices[4] = {
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
     };
 
-    App.vertexBuffer_size = sizeof(vertices[0]) * 3;
+    App.vertexBuffer_size = sizeof(vertices[0]) * 4;
     App.vertices = (void*)&vertices[0];
+
+    const uint16_t indices[6] = {
+        0, 1, 2, 2, 3, 0
+    };
+
+    App.indexBuffer_size = sizeof(indices[0]) * 6;
+    App.indices = (void*)&indices[0];
 
     initVulkan(&App);
 
