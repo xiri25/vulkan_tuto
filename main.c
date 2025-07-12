@@ -74,6 +74,8 @@ typedef struct vk_Struct {
     VkBuffer stagingBuffer;
     uint64_t stagingBuffer_size;
     VkDeviceMemory stagingBufferMemory;
+
+    uint32_t currentFrame;
     
     void* vertices; // FIXME: Dont do it like this pls, no se como lo esta haciendo
     void* indices;
@@ -1668,7 +1670,7 @@ void drawFrame(vk_Struct_t* app)
         - Present the swap chain image
      */
 
-    uint32_t currentFrame = 0;
+    uint32_t currentFrame = app->currentFrame;
 
     vkWaitForFences(app->device, 1, &app->inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
 
@@ -1698,7 +1700,7 @@ void drawFrame(vk_Struct_t* app)
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = app->commandBuffers;
+    // submitInfo.pCommandBuffers = app->commandBuffers;
 
     VkSemaphore signalSemaphores[] = {app->renderFinishedSemaphores[currentFrame]};
     submitInfo.signalSemaphoreCount = 1;
@@ -1730,7 +1732,7 @@ void drawFrame(vk_Struct_t* app)
         exit(24);
     }
 
-    currentFrame = (currentFrame + 1) % app->MAX_FRAMES_IN_FLIGHT;
+    app->currentFrame = (currentFrame + 1) % app->MAX_FRAMES_IN_FLIGHT;
 }
 
 void mainLoop(vk_Struct_t* app)
@@ -1823,6 +1825,8 @@ int main(void)
 
     App.indexBuffer_size = sizeof(indices[0]) * 6;
     App.indices = (void*)&indices[0];
+
+    App.currentFrame = 0;
 
     initVulkan(&App);
 
