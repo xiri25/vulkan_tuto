@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -O2
-LDFLAGS=-g -lglfw -lvulkan -ldl -lpthread #-lX11 -lXxf86vm -lXrandr -lXi
+LDFLAGS=-g -lglfw -lvulkan -ldl -lpthread -lm #-lX11 -lXxf86vm -lXrandr -lXi
 SRC_FILES=main.c
 
 .PHONY: all clean

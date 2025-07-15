@@ -2,6 +2,8 @@
 #include <GLFW/glfw3.h>
 
 #include <cglm/cglm.h>
+#include <cglm/affine-pre.h>
+#include <cglm/cam.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +11,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <time.h>
+#include <stdalign.h>
+#include <unistd.h> // sleep()
 
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -19,8 +24,8 @@ struct SwapChainSupportDetails {
 };
 
 typedef struct vk_Struct {
-    const uint32_t WIDTH;
-    const uint32_t HEIGHT;
+    uint32_t WIDTH;
+    uint32_t HEIGHT;
 
     const char** validationLayers;
     const uint32_t validationLayers_count;
@@ -33,6 +38,7 @@ typedef struct vk_Struct {
     GLFWwindow* window;
 
     VkInstance instance;
+    VkDebugUtilsMessengerEXT debugMessenger;
     VkSurfaceKHR surface;
     VkPhysicalDevice physicalDevice;
     VkQueue graphicsQueue;
@@ -50,6 +56,7 @@ typedef struct vk_Struct {
 
     VkRenderPass renderPass;
 
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
@@ -70,12 +77,20 @@ typedef struct vk_Struct {
     uint64_t indexBuffer_size;
     VkDeviceMemory indexBufferMemory;
 
+    VkBuffer* uniformBuffers; // As many as frames in flight
+    VkDeviceMemory* uniformBuffersMemory;
+    void** uniformBuffersMapped; // Array of void*, as many as frames in flight
+
     // NO me queda claro si es esto lo que hace...
     VkBuffer stagingBuffer;
     uint64_t stagingBuffer_size;
     VkDeviceMemory stagingBufferMemory;
 
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet* descriptorSets; // As many as frames in flight
+
     uint32_t currentFrame;
+    double last_frame_time;
     
     void* vertices; // FIXME: Dont do it like this pls, no se como lo esta haciendo
     void* indices;
@@ -84,6 +99,12 @@ typedef struct vk_Struct {
 struct Vertex {
     vec2 pos;
     vec3 color;
+};
+
+struct UniformBufferObject {
+    alignas(16) mat4 model;
+    alignas(16) mat4 view;
+    alignas(16) mat4 proj;
 };
 
 // NOTE: I dont like this
@@ -150,12 +171,12 @@ static struct VkVertexInputAttributeDescription_2 getAttributeDescriptions() {
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
-    //XD
-    (void)width;
-    (void)height;
-
-
     vk_Struct_t* app = (vk_Struct_t*)(glfwGetWindowUserPointer(window)); // XDDDDDDD
+    
+    app->WIDTH = width;
+    app->HEIGHT= height;
+    // printf("framebufferResizeCallback(): width = %d, height = %d\n", width, height);
+    
     app->framebufferResized = true;
 }
 
@@ -233,17 +254,33 @@ void create_VkInstance(vk_Struct_t* app)
     VkInstanceCreateInfo createInfo = {}; //Importante inicializar
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
+    
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions = NULL;
 
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     if (!glfwExtensions) {
         printf("GLFW failed to get required Vulkan extensions!\n");
+        for (uint32_t i = 0; i < glfwExtensionCount; i++) {
+            printf("glfw_extension: %s\n", glfwExtensions[i]);
+        }
         exit(1);
     }
 
-    createInfo.enabledExtensionCount = glfwExtensionCount;
-    createInfo.ppEnabledExtensionNames = glfwExtensions;
+    // Chapuza
+
+    const char* Extensions[glfwExtensionCount + 1];
+    for (uint32_t i = 0; i < glfwExtensionCount; i++) {
+        Extensions[i] = glfwExtensions[i];
+    }
+    Extensions[glfwExtensionCount] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+
+    for (uint32_t i = 0; i < (glfwExtensionCount + 1); i++) {
+        printf("glfw_extension: %s\n", Extensions[i]);
+    }
+
+    createInfo.enabledExtensionCount = glfwExtensionCount + 1;
+    createInfo.ppEnabledExtensionNames = Extensions;
     if (app->enableValidationLayers)
     {
         createInfo.enabledLayerCount = app->validationLayers_count;
@@ -371,6 +408,12 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, const char** deviceExt
 
     VkExtensionProperties availableExtensions[extensionCount];
     vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount, availableExtensions);
+
+    /*
+    for (uint32_t i = 0; i < extensionCount; i++) {
+        printf("Extension: %s\n", availableExtensions[i].extensionName);
+    }
+    */
 
     // TODO: I dont like this GPT shit
 
@@ -1042,31 +1085,28 @@ void createGraphicsPipeline(vk_Struct_t* app)
      */
     VkPipelineRasterizationStateCreateInfo rasterizer = {};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.flags = (VkPipelineRasterizationStateCreateFlags)0;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.depthBiasConstantFactor = 0.0f;
+    rasterizer.depthBiasClamp = 0.0f;
+    rasterizer.depthBiasSlopeFactor = 1.0f;
+    rasterizer.lineWidth = 1.0f;
 
     /*
      * If rasterizerDiscardEnable is set to VK_TRUE, then geometry never passes
      * through the rasterizer stage. This basically disables any output to the framebuffer.
-     */
-    rasterizer.rasterizerDiscardEnable = VK_FALSE;
 
-    /*
-     * The polygonMode determines how fragments are generated for geometry. The following modes are available:
+    * The polygonMode determines how fragments are generated for geometry. The following modes are available:
         VK_POLYGON_MODE_FILL: fill the area of the polygon with fragments
         VK_POLYGON_MODE_LINE: polygon edges are drawn as lines
         VK_POLYGON_MODE_POINT: polygon vertices are drawn as points
         Using any mode other than fill requires enabling a GPU feature.
      */
-    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.lineWidth = 1.0f;
-
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthBiasEnable = VK_FALSE;
-    rasterizer.depthBiasConstantFactor = 0.0f; // Optional
-    rasterizer.depthBiasClamp = 0.0f; // Optional
-    rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
-
 
     /* Multisamplig (gpu feature to enable) */
     VkPipelineMultisampleStateCreateInfo multisampling = {};
@@ -1136,8 +1176,8 @@ void createGraphicsPipeline(vk_Struct_t* app)
      */
     VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0; // Optional
-    pipelineLayoutInfo.pSetLayouts = NULL; // Optional
+    pipelineLayoutInfo.setLayoutCount = 1; // Optional
+    pipelineLayoutInfo.pSetLayouts = &app->descriptorSetLayout; // Optional
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = NULL; // Optional
 
@@ -1488,7 +1528,7 @@ void createIndexBuffer(vk_Struct_t* app)
 
     createBuffer(app,
                  bufferSize,
-                 VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                  &app->indexBuffer,
                  &app->indexBufferMemory);
@@ -1496,11 +1536,204 @@ void createIndexBuffer(vk_Struct_t* app)
     copyBuffer(app, stagingBuffer, app->indexBuffer, bufferSize);
 }
 
+void createDescriptorSetLayout(vk_Struct_t* app)
+{
+    VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    uboLayoutBinding.pImmutableSamplers = NULL;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+
+    vkCreateDescriptorSetLayout(app->device, &layoutInfo, NULL, &app->descriptorSetLayout);
+}
+
+void createUniformBuffers(vk_Struct_t* app)
+{
+    /*
+     * uniformBuffers.clear();
+     * uniformBuffersMemory.clear();
+     * uniformBuffersMapped.clear();
+     *
+     * IDK why does that, maybe memset
+     * TODO: Mover aqui los mallocs
+     */
+
+    memset(app->uniformBuffers, 0, sizeof(VkBuffer) * app->MAX_FRAMES_IN_FLIGHT);
+    memset(app->uniformBuffersMemory, 0, sizeof(VkDeviceMemory) * app->MAX_FRAMES_IN_FLIGHT);
+    memset(app->uniformBuffersMapped, 0, sizeof(struct UniformBufferObject) * app->MAX_FRAMES_IN_FLIGHT);
+
+    for (int i = 0; i < app->MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDeviceSize bufferSize = sizeof(struct UniformBufferObject);
+        VkBuffer buffer = {};
+        VkDeviceMemory bufferMem = {};
+        createBuffer(app,
+                     bufferSize,
+                     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     &buffer,
+                     &bufferMem);
+        app->uniformBuffers[i] = buffer;
+        app->uniformBuffersMemory[i] = bufferMem;
+        vkMapMemory(app->device, app->uniformBuffersMemory[i], 0, bufferSize, (VkMemoryMapFlags)0, &app->uniformBuffersMapped[i]);
+        /*
+         * We map the buffer right after creation using vkMapMemory
+         * to get a pointer to which we can write the data later on.
+         * The buffer stays mapped to this pointer for the application’s
+         * whole lifetime. This technique is called "persistent mapping"
+         * and works on all Vulkan implementations. Not having to map the
+         * buffer every time we need to update it increases performances,
+         * as mapping is not free.
+         */
+    }
+
+}
+
+void createDescriptorPool(vk_Struct_t* app)
+{
+    VkDescriptorPoolSize poolSize = {};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = app->MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = (VkDescriptorPoolCreateFlags)0; // maybe leave this with default value???
+    poolInfo.maxSets = app->MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = 1,
+    poolInfo.pPoolSizes = &poolSize;
+
+    vkCreateDescriptorPool(app->device, &poolInfo, NULL, &app->descriptorPool);
+}
+
+void createDescriptorSets(vk_Struct_t* app)
+{
+    VkDescriptorSetLayout layout[] = {app->descriptorSetLayout, app->descriptorSetLayout}; // Size is app->MAX_FRAMES_IN_FLIGHT;
+    
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = app->descriptorPool;
+    allocInfo.descriptorSetCount = (uint32_t)app->MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts = &layout[0];
+
+    // descriptorSets.clear(); maybe memset??
+    memset(app->descriptorSets, 0, sizeof(VkDescriptorSet) * app->MAX_FRAMES_IN_FLIGHT);
+    vkAllocateDescriptorSets(app->device, &allocInfo, app->descriptorSets);
+
+    for (int i = 0; i < app->MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo = {};
+        bufferInfo.buffer = app->uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(struct UniformBufferObject);
+
+        VkWriteDescriptorSet descriptorWrite = {};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.dstSet = app->descriptorSets[i];
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+
+        /*
+         * The first two fields specify the descriptor set to update and the
+         * binding. We gave our uniform buffer binding index 0. Remember that
+         * descriptors can be arrays, so we also need to specify the first
+         * index in the array that we want to update. We’re not using an
+         * array, so the index is simply 0.
+         * We need to specify the type of descriptor again. It’s possible
+         * to update multiple descriptors at once in an array, starting
+         * at index dstArrayElement. The descriptorCount field specifies
+         * how many array elements you want to update.
+         * The last field references an array with descriptorCount structs
+         * that actually configure the descriptors. It depends on the type
+         * of descriptor which one of the three you actually need to use.
+         * The pBufferInfo field is used for descriptors that refer
+         * to buffer data, pImageInfo is used for descriptors that refer
+         * to image data, and pTexelBufferView is used for descriptors
+         * that refer to buffer views. Our descriptor is based on buffers,
+         * so we’re using pBufferInfo
+         */
+
+        vkUpdateDescriptorSets(app->device, 1, &descriptorWrite, 0, NULL);
+
+        /*
+         * The updates are applied using vkUpdateDescriptorSets.
+         * It accepts two kinds of arrays as parameters:
+         * an array of VkWriteDescriptorSet and an array of VkCopyDescriptorSet.
+         * The latter can be used to copy descriptors to each other, as its name implies.
+         */
+
+        /*
+         * As some of the structures and function calls hinted at, it is actually
+         * possible to bind multiple descriptor sets simultaneously. You need to
+         * specify a descriptor set layout for each descriptor set when creating
+         * the pipeline layout. Shaders can then reference specific descriptor sets like this:
+         *
+         * struct UniformBuffer {
+           };
+           ConstantBuffer<UniformBuffer> ubo;
+           You can use this feature to put descriptors that vary per-object and descriptors
+           that are shared into separate descriptor sets. In that case, you avoid rebinding
+           most of the descriptors across draw calls which are potentially more efficient.
+         */
+    }
+}
+
+static const char* to_string(VkDebugUtilsMessageTypeFlagsEXT type) {
+    switch (type) {
+        case VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT:     return "VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT";
+        case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT:  return "VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT";
+        case VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT: return "VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT";
+        default:                                       return "Unknown";
+    }
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* hola) {
+    (void)hola;
+    if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT || severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        printf("validation layer: %s, msg: %s\n", to_string(type), pCallbackData->pMessage);
+    }
+
+    return VK_FALSE;
+}
+
+void setupDebugMessenger(vk_Struct_t* app)
+{
+    if (!app->enableValidationLayers) return;
+
+    VkDebugUtilsMessageSeverityFlagsEXT severityFlags = (VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+                                                         VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                                         VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+    VkDebugUtilsMessageTypeFlagsEXT messageTypeFlags = (VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                                          VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+                                                          VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT);
+    VkDebugUtilsMessengerCreateInfoEXT debugUtilsMessageTypeFlags = {};
+    debugUtilsMessageTypeFlags.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debugUtilsMessageTypeFlags.messageSeverity = severityFlags;
+    debugUtilsMessageTypeFlags.messageType = messageTypeFlags;
+    debugUtilsMessageTypeFlags.pfnUserCallback = &debugCallback;
+
+    /* llo he leido en reddit XD TODO: fixme */
+    PFN_vkCreateDebugUtilsMessengerEXT myvkCreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT)( vkGetInstanceProcAddr(app->instance, "vkCreateDebugUtilsMessengerEXT"));
+    if (!myvkCreateDebugUtilsMessengerEXT) {
+        printf("failed to load vkCreateDebugUtilsMessengerEXT()\n");
+        return;
+    }
+
+    myvkCreateDebugUtilsMessengerEXT(app->instance, &debugUtilsMessageTypeFlags, NULL, &app->debugMessenger);
+}
+
 void initVulkan(vk_Struct_t* app)
 {
     app->window = create_window(app);
 
     create_VkInstance(app);
+    setupDebugMessenger(app);
     createSurface(app);
     pickPhysicalDevice(app);
     createLogicalDevice(app);
@@ -1523,6 +1756,8 @@ void initVulkan(vk_Struct_t* app)
 
     createRenderPass(app);
 
+    createDescriptorSetLayout(app);
+
     createGraphicsPipeline(app);
 
     app->swapChainFramebuffers = malloc(sizeof(VkFramebuffer) * app->imageCount);
@@ -1536,6 +1771,9 @@ void initVulkan(vk_Struct_t* app)
 
     createVertexBuffer(app);
     createIndexBuffer(app);
+    createUniformBuffers(app);
+    createDescriptorPool(app);
+    createDescriptorSets(app);
 
     app->commandBuffers = malloc(sizeof(VkCommandBuffer) * app->MAX_FRAMES_IN_FLIGHT);
     if (app->commandBuffers == NULL) {
@@ -1609,6 +1847,23 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
 
     vkCmdBindVertexBuffers(app->commandBuffers[currentFrame], 0, 1, &app->vertexBuffer, (VkDeviceSize[]) {0});
     vkCmdBindIndexBuffer(app->commandBuffers[currentFrame], app->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    vkCmdBindDescriptorSets(app->commandBuffers[currentFrame],
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            app->pipelineLayout,
+                            0,
+                            1,
+                            &app->descriptorSets[currentFrame],
+                            0,
+                            NULL);
+    /*
+     * Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines.
+     * Therefore, we need to specify if we want to bind descriptor sets to the graphics
+     * or compute pipeline. The next parameter is the layout that the descriptors are
+     * based on. The next three parameters specify the index of the first descriptor set,
+     * the number of sets to bind, and the array of sets to bind. We’ll get back to this in a moment
+     * The last two parameters specify an array of offsets that are used for dynamic
+     * descriptors. We’ll look at these in a future chapter.
+     */
 
     //vkCmdDraw(app->commandBuffers[currentFrame], 3, 1, 0, 0);
     vkCmdDrawIndexed(app->commandBuffers[currentFrame],
@@ -1659,7 +1914,65 @@ void recreateSwapChain(vk_Struct_t* app)
     createImageViews(app);
 }
 
-void drawFrame(vk_Struct_t* app)
+static double time_now_ms(void) {
+    struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &current_time);
+    double ms = (current_time.tv_sec + (current_time.tv_nsec / 1e9)) * 1000;
+    return ms;
+}
+
+/*
+static void print_mat4(mat4 mat4)
+{
+    printf("%f %f %f %f\n", mat4[0][0], mat4[0][1], mat4[0][2], mat4[0][3]);
+    printf("%f %f %f %f\n", mat4[1][0], mat4[1][1], mat4[1][2], mat4[1][3]);
+    printf("%f %f %f %f\n", mat4[2][0], mat4[2][1], mat4[2][2], mat4[2][3]);
+    printf("%f %f %f %f\n", mat4[3][0], mat4[3][1], mat4[3][2], mat4[3][3]);
+}
+*/
+
+void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
+{
+    // El currentFrame tambien lo puedo obtener de la clase, no se cual es mejor, por ahora asi
+
+    static float time = 0;
+    float time_dt = dt * 1e-3;
+    time += time_dt; /* I HATE MY SELF */
+
+    struct UniformBufferObject ubo = {};
+    glm_mat4_identity(ubo.model);
+
+    vec3 axis = {0.0f, 0.0f, 1.0f};
+    glm_rotate(ubo.model, time * glm_rad(90.0f), axis);
+    vec3 eye_vector = {2.0f, 2.0f, 2.0f};
+    vec3 center_vector = {0.0f, 0.0f, 0.0f};
+    vec3 up_vector = {0.0f, 0.0f, 1.0f};
+    glm_lookat(eye_vector, center_vector, up_vector, ubo.view);
+
+    float fovy = glm_rad(45.0f);
+    float aspect_ratio = (float)app->swapChainExtent.width / (float)app->swapChainExtent.height;
+    float near_clipping_plane = 0.1f;
+    float far_clipping_plane = 10.0f;
+    glm_perspective(fovy, aspect_ratio, near_clipping_plane, far_clipping_plane, ubo.proj);
+    ubo.proj[1][1] *= -1;
+
+    /*
+     * GLM was originally designed for OpenGL, where the Y coordinate of the clip
+     * coordinates is inverted. The easiest way to compensate for that is to flip
+     * the sign on the scaling factor of the Y axis in the projection matrix.
+     * If you don’t do this, then the image will be rendered upside down.
+     */
+    
+    memcpy(app->uniformBuffersMapped[currentFrame], &ubo, sizeof(struct UniformBufferObject));
+
+    /*
+     * Using a UBO this way is not the most efficient way to pass frequently changing values
+     * to the shader. A more efficient way to pass a small buffer of data to shaders is
+     * push constants. We may look at these in a future chapter.
+     */
+}
+
+void drawFrame(vk_Struct_t* app, double dt)
 {
     /*
      * At a high level, rendering a frame in Vulkan consists of a common set of steps:
@@ -1689,6 +2002,8 @@ void drawFrame(vk_Struct_t* app)
 
     vkResetCommandBuffer(app->commandBuffers[currentFrame], 0);
     recordCommandBuffer(app, imageIndex, currentFrame);
+
+    updateUniformBuffer(app, currentFrame, dt); // Realmente el currentFrame esta en la clase
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1738,8 +2053,14 @@ void drawFrame(vk_Struct_t* app)
 void mainLoop(vk_Struct_t* app)
 {
     while (!glfwWindowShouldClose(app->window)) {
+    
+        double begin_frame = time_now_ms();
+
         glfwPollEvents();
-        drawFrame(app);
+        drawFrame(app, app->last_frame_time);
+    
+        double end_frame = time_now_ms();
+        app->last_frame_time = end_frame - begin_frame;
     }
 
     vkDeviceWaitIdle(app->device);
@@ -1786,6 +2107,16 @@ void cleanup(vk_Struct_t* app)
 
 int main(void)
 {
+    // Time to renderdoc to hook in
+    sleep(2);
+
+    // (16 floats/mat4) * (3 mat4/struct) * (32 bits/float) / (8 bits/byte)
+    if (sizeof(struct UniformBufferObject) != 16*3*32/8) {
+        printf("struct UniformBufferObject no esta alinedado, sizeof(struct UniformBufferObject) = %lu\n",
+               sizeof(struct UniformBufferObject));
+        exit(1);
+    }
+
     vk_Struct_t App = {
         .WIDTH = 800,
         .HEIGHT = 600,
@@ -1797,8 +2128,8 @@ int main(void)
 #else
         .enableValidationLayers = true,
 #endif
-        .deviceExtensions = malloc(sizeof(const char*) * 1),
         .deviceExtensions_count = 1,
+        .deviceExtensions = malloc(sizeof(const char*) * 1),
         .framebufferResized = false,
     };
 
@@ -1827,6 +2158,30 @@ int main(void)
     App.indices = (void*)&indices[0];
 
     App.currentFrame = 0;
+
+    App.uniformBuffers = malloc(sizeof(VkBuffer) * App.MAX_FRAMES_IN_FLIGHT);
+    if (App.uniformBuffers == NULL) {
+        printf("No se ha popido alojar memoria para los uniformBuffers\n");
+        return 1;
+    }
+    App.uniformBuffersMemory = malloc(sizeof(VkDeviceMemory) * App.MAX_FRAMES_IN_FLIGHT);
+    if (App.uniformBuffers == NULL) {
+        printf("No se ha popido alojar memoria para los VkDeviceMemory de uniformBuffersMemory\n");
+        return 1;
+    }
+    App.uniformBuffersMapped = malloc(sizeof(struct UniformBufferObject) * App.MAX_FRAMES_IN_FLIGHT);
+    if (App.uniformBuffersMapped == NULL) {
+        printf("No se ha popido alojar memoria para los struct UniformBufferObject de uniformBuffersMapped\n");
+        return 1;
+    }
+    
+    App.descriptorSets = malloc(sizeof(VkDescriptorSet) * App.MAX_FRAMES_IN_FLIGHT);
+    if (App.descriptorSets == NULL) {
+        printf("No se ha popido alojar memoria para los descriptorSets\n");
+        return 1;
+    }
+
+    App.last_frame_time = 0;
 
     initVulkan(&App);
 
