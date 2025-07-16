@@ -95,6 +95,8 @@ typedef struct vk_Struct {
 
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
 
     uint32_t currentFrame;
     double last_frame_time;
@@ -480,7 +482,7 @@ bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char*
     }
 
     bool isDeviceSuitable = deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
-        deviceFeatures.geometryShader && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
+        deviceFeatures.geometryShader && deviceFeatures.samplerAnisotropy && indices.graphicsFamily > -1 && // -1 porque el tuto usa optional
         extensionsSupported && swapChainAdequate;
 
     return isDeviceSuitable;
@@ -546,6 +548,7 @@ void createLogicalDevice(vk_Struct_t* app)
     }
 
     VkPhysicalDeviceFeatures deviceFeatures = {};
+    deviceFeatures.samplerAnisotropy = VK_TRUE;
     VkDeviceCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = queueFamilyCount;
@@ -766,29 +769,38 @@ void createSwapChain(vk_Struct_t* app)
     free(swapChainSupport.presentModes);
 }
 
+VkImageView createImageView(vk_Struct_t* app, VkImage* image, VkFormat format)
+{
+    VkImageView imageView;
+
+    VkImageViewCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    createInfo.image = *image;
+    createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    createInfo.format = format;
+    createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    createInfo.subresourceRange.baseMipLevel = 0;
+    createInfo.subresourceRange.levelCount = 1;
+    createInfo.subresourceRange.baseArrayLayer = 0;
+    createInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(app->device, &createInfo, NULL, &imageView) != VK_SUCCESS)
+    {
+        printf("failed to create image view!\n");
+        exit(9);
+    }
+
+    return imageView;
+}
+
 void createImageViews(vk_Struct_t* app)
 {
     for (size_t i = 0; i < app->imageCount; i++) {
-        VkImageViewCreateInfo createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = app->swapChainImages[i];
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = app->swapChainImageFormat;
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
-
-        if (vkCreateImageView(app->device, &createInfo, NULL, &app->swapChainImageViews[i]) != VK_SUCCESS)
-        {
-            printf("failed to create image views!\n");
-            exit(9);
-        }
+        app->swapChainImageViews[i] = createImageView(app, &app->swapChainImages[i], app->swapChainImageFormat);
     }
 }
 
@@ -1960,7 +1972,7 @@ void createTextureImage(vk_Struct_t* app)
     createImage(app,
                 texWidth,
                 texHeight,
-                VK_FORMAT_B8G8R8A8_SRGB,
+                VK_FORMAT_R8G8B8A8_SRGB,
                 VK_IMAGE_TILING_OPTIMAL,
                 VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1976,6 +1988,87 @@ void createTextureImage(vk_Struct_t* app)
      * it for shader access:
      */
     transitionImageLayout(app, &app->textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void createTextureImageView(vk_Struct_t* app)
+{
+    app->textureImageView = createImageView(app, &app->textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+void createTextureSampler(vk_Struct_t* app)
+{
+    /*
+     * It is possible for shaders to read texels directly from images,
+     * but that is not very common when they are used as textures.
+     * Textures are usually accessed through samplers,
+     * which will apply filtering and transformations to
+     * compute the final color that is retrieved.
+     * Aside from these filters, a sampler can also take care
+     * of transformations. It determines what happens when
+     * you try to read texels outside the image through
+     * its addressing mode.
+     */
+
+    VkPhysicalDeviceProperties propierties;
+    vkGetPhysicalDeviceProperties(app->physicalDevice, &propierties); // TODO: save this the first time
+    
+    VkSamplerCreateInfo samplerInfo = {};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    /*
+     * The magFilter and minFilter fields specify how to interpolate
+     * texels that are magnified or minified. Magnification concerns
+     * the oversampling problem describes above, and minification
+     * concerns undersampling. The choices are VK_FILTER_NEAREST
+     * and VK_FILTER_LINEAR, corresponding to the modes demonstrated
+     * in the images above
+     */
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    /*
+     * The addressing mode can be specified per axis using the
+     * addressMode fields. The available values are listed below.
+     * Most of these are demonstrated in the image above.
+     * Note that the axes are called U, V and W instead of X, Y and Z.
+     * This is a convention for texture space coordinates.
+     - VK_SAMPLER_ADDRESS_MODE_REPEAT: Repeat the texture when going beyond the image dimensions.
+     - VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: Like repeat, but inverts the coordinates to mirror the image when going beyond the dimensions.
+     - VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: Take the color of the edge closest to the coordinate beyond the image dimensions.
+     - VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: Like clamp to edge, but instead uses the edge opposite to the closest edge.
+     - VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: Return a solid color when sampling beyond the dimensions of the image.
+     */
+    samplerInfo.mipLodBias = 0.0f; // Creo que esto, o algo relacionado esta en las propierties
+    samplerInfo.anisotropyEnable = VK_TRUE; // Si no lo soportara VK_FALSE
+    samplerInfo.maxAnisotropy = propierties.limits.maxSamplerAnisotropy; // Si no lo soportara 1.0f
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    /*
+     * If a comparison function is enabled, then texels will first be
+     * compared to a value, and the result of that comparison is used
+     * in filtering operations. This is mainly used for percentage-closer
+     * filtering on shadow maps.
+     */
+
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE; // Doble negacion
+
+    /*
+     * The unnormalizedCoordinates field specifies which coordinate
+     * system you want to use to address texels in an image. If this
+     * field is VK_TRUE, then you can simply use coordinates within
+     * the [0, texWidth) and [0, texHeight) range. If it is VK_FALSE,
+     * then the texels are addressed using the [0, 1) range on all axes.
+     * Real-world applications almost always use normalized coordinates,
+     * because then it’s possible to use textures of varying resolutions
+     * with the exact same coordinates.
+     */
+
+    vkCreateSampler(app->device, &samplerInfo, NULL, &app->textureSampler);
 }
 
 void initVulkan(vk_Struct_t* app)
@@ -2020,6 +2113,8 @@ void initVulkan(vk_Struct_t* app)
     createCommandPool(app);
 
     createTextureImage(app);
+    createTextureImageView(app);
+    createTextureSampler(app);
 
     createVertexBuffer(app);
     createIndexBuffer(app);
