@@ -108,6 +108,7 @@ typedef struct vk_Struct {
 struct Vertex {
     vec2 pos;
     vec3 color;
+    vec2 texCoord;
 };
 
 struct UniformBufferObject {
@@ -147,7 +148,7 @@ static VkVertexInputBindingDescription getBindingDescription()
 
 static VkVertexInputAttributeDescription* getAttributeDescriptions()
 {
-    VkVertexInputAttributeDescription* result = malloc(sizeof(VkVertexInputAttributeDescription) * 2);
+    VkVertexInputAttributeDescription* result = malloc(sizeof(VkVertexInputAttributeDescription) * 3); // FIXME: Need to be free()'d
     result[0].location = 0;
     result[0].binding = 0;
     result[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -158,25 +159,19 @@ static VkVertexInputAttributeDescription* getAttributeDescriptions()
     result[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     result[1].offset = offsetof(struct Vertex, color);
 
-    return result;
-}
-
-/*
-static struct VkVertexInputAttributeDescription_2 getAttributeDescriptions() {
-    struct VkVertexInputAttributeDescription_2 result = {};
-    result.pos.location = 0;
-    result.pos.binding = 0;
-    result.pos.format = VK_FORMAT_R32G32_SFLOAT;
-    result.pos.offset = offsetof(struct Vertex, pos);
-
-    result.color.location = 1;
-    result.color.binding = 0;
-    result.color.format = VK_FORMAT_R32G32B32_SFLOAT;
-    result.color.offset = offsetof(struct Vertex, color);
+    result[2].location = 2;
+    result[2].binding = 0;
+    result[2].format = VK_FORMAT_R32G32_SFLOAT;
+    result[2].offset = offsetof(struct Vertex, texCoord);
 
     return result;
 }
-*/
+
+static uint32_t getAttributeDescriptions_size()
+{
+    // FIXME: xd
+    return 3;
+}
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
@@ -1044,7 +1039,7 @@ void createGraphicsPipeline(vk_Struct_t* app)
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertexInputInfo.vertexBindingDescriptionCount = 1;
     vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-    vertexInputInfo.vertexAttributeDescriptionCount = 2;
+    vertexInputInfo.vertexAttributeDescriptionCount = getAttributeDescriptions_size();
     vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
     /* Input Assembly */
@@ -1639,10 +1634,40 @@ void createDescriptorSetLayout(vk_Struct_t* app)
     uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     uboLayoutBinding.pImmutableSamplers = NULL;
 
+    /*
+     * In this chapter, we will look at a new type of descriptor:
+     * combined image sampler. This descriptor makes it possible
+     * for shaders to access an image resource through a sampler
+     * object like the one we created in the previous chapter.
+     * It’s worth noting that Vulkan provides flexibility in how
+     * textures are accessed in shaders through different
+     * descriptor types. While we’ll be using a combined image
+     * sampler in this tutorial, Vulkan also supports separate
+     * descriptors for samplers (VK_DESCRIPTOR_TYPE_SAMPLER)
+     * and sampled images (VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE).
+     * Using separate descriptors allows you to reuse the same
+     * sampler with multiple images or access the same image
+     * with different sampling parameters. This can be more
+     * efficient in scenarios where you have many textures
+     * that use identical sampling configurations. However,
+     * the combined image sampler is often more convenient
+     * and can offer better performance on some hardware
+     * due to optimized cache usage.
+     */
+
+    VkDescriptorSetLayoutBinding samplerBinding = {};
+    samplerBinding.binding = 1;
+    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerBinding.descriptorCount = 1;
+    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    samplerBinding.pImmutableSamplers = NULL;
+
+    VkDescriptorSetLayoutBinding bindings[] = {uboLayoutBinding, samplerBinding};
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
 
     vkCreateDescriptorSetLayout(app->device, &layoutInfo, NULL, &app->descriptorSetLayout);
 }
@@ -1690,16 +1715,22 @@ void createUniformBuffers(vk_Struct_t* app)
 
 void createDescriptorPool(vk_Struct_t* app)
 {
-    VkDescriptorPoolSize poolSize = {};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = app->MAX_FRAMES_IN_FLIGHT;
+    VkDescriptorPoolSize poolSize_ubo = {};
+    poolSize_ubo.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize_ubo.descriptorCount = app->MAX_FRAMES_IN_FLIGHT;
 
+    VkDescriptorPoolSize poolSize_combinedImageSampler = {};
+    poolSize_combinedImageSampler.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize_combinedImageSampler.descriptorCount = app->MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolSize poolSize[] = {poolSize_ubo, poolSize_combinedImageSampler};
+    
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.flags = (VkDescriptorPoolCreateFlags)0; // maybe leave this with default value???
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     poolInfo.maxSets = app->MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 1,
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2,
+    poolInfo.pPoolSizes = poolSize;
 
     vkCreateDescriptorPool(app->device, &poolInfo, NULL, &app->descriptorPool);
 }
@@ -1724,14 +1755,14 @@ void createDescriptorSets(vk_Struct_t* app)
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(struct UniformBufferObject);
 
-        VkWriteDescriptorSet descriptorWrite = {};
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.dstSet = app->descriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.pBufferInfo = &bufferInfo;
+        VkWriteDescriptorSet descriptorWrite_ubo = {};
+        descriptorWrite_ubo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite_ubo.dstSet = app->descriptorSets[i];
+        descriptorWrite_ubo.dstBinding = 0;
+        descriptorWrite_ubo.dstArrayElement = 0;
+        descriptorWrite_ubo.descriptorCount = 1;
+        descriptorWrite_ubo.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite_ubo.pBufferInfo = &bufferInfo;
 
         /*
          * The first two fields specify the descriptor set to update and the
@@ -1752,8 +1783,25 @@ void createDescriptorSets(vk_Struct_t* app)
          * that refer to buffer views. Our descriptor is based on buffers,
          * so we’re using pBufferInfo
          */
+        
+        VkDescriptorImageInfo imageInfo = {};
+        imageInfo.sampler = app->textureSampler;
+        imageInfo.imageView = app->textureImageView;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        vkUpdateDescriptorSets(app->device, 1, &descriptorWrite, 0, NULL);
+        VkWriteDescriptorSet descriptorWrite_sampler = {};
+        descriptorWrite_sampler.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite_sampler.dstSet = app->descriptorSets[i];
+        descriptorWrite_sampler.dstBinding = 1;
+        descriptorWrite_sampler.dstArrayElement = 0;
+        descriptorWrite_sampler.descriptorCount = 1;
+        descriptorWrite_sampler.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrite_sampler.pImageInfo = &imageInfo;
+
+        VkWriteDescriptorSet descriptorWrite[] = {descriptorWrite_ubo, descriptorWrite_sampler};
+        uint32_t descriptorWrite_size = 2; // FIXME: Calculate
+
+        vkUpdateDescriptorSets(app->device, descriptorWrite_size, descriptorWrite, 0, NULL);
 
         /*
          * The updates are applied using vkUpdateDescriptorSets.
@@ -2488,10 +2536,10 @@ int main(void)
     App.deviceExtensions[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME; // Its a fucking macro, no a string WTF?????
 
     const struct Vertex vertices[4] = {
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-        {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
     };
 
     App.vertexBuffer_size = sizeof(vertices[0]) * 4;
