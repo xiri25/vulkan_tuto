@@ -1,9 +1,13 @@
+#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
 #include <cglm/cglm.h>
 #include <cglm/affine-pre.h>
 #include <cglm/cam.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,6 +92,9 @@ typedef struct vk_Struct {
 
     VkDescriptorPool descriptorPool;
     VkDescriptorSet* descriptorSets; // As many as frames in flight
+
+    VkImage textureImage;
+    VkDeviceMemory textureImageMemory;
 
     uint32_t currentFrame;
     double last_frame_time;
@@ -1388,6 +1395,41 @@ void createBuffer(vk_Struct_t* app,
     vkBindBufferMemory(app->device, *buffer, *bufferMemory, 0);
 }
 
+VkCommandBuffer beginSingleTimeCommands(vk_Struct_t* app)
+{
+    VkCommandBuffer commandBuffer = {};
+
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = app->commandPool;
+    allocInfo.commandBufferCount = 1;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+    vkAllocateCommandBuffers(app->device, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    return commandBuffer;
+}
+
+void endSingleBufferCommands(vk_Struct_t* app, VkCommandBuffer* commandBuffer)
+{
+    vkEndCommandBuffer(*commandBuffer);
+
+    // Execute the cmd buffer
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pCommandBuffers = commandBuffer;
+    submitInfo.commandBufferCount = 1;
+
+    vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, NULL);
+    vkQueueWaitIdle(app->graphicsQueue);
+}
+
 void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
 {
     /*
@@ -1400,35 +1442,15 @@ void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevi
      * flag during command pool generation in that case.
      */
 
-    VkCommandBufferAllocateInfo allocInfo = {};
-    allocInfo.commandPool = app->commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    VkCommandBuffer commandCopyBuffer = beginSingleTimeCommands(app);
 
-    VkCommandBuffer commandCopyBuffer;
-    vkAllocateCommandBuffers(app->device, &allocInfo, &commandCopyBuffer);
-
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandCopyBuffer, &beginInfo);
     VkBufferCopy bufferCopy = {};
     bufferCopy.srcOffset = 0;
     bufferCopy.dstOffset = 0;
     bufferCopy.size = size;
     vkCmdCopyBuffer(commandCopyBuffer, srcBuffer, dstBuffer, 1, &bufferCopy);
 
-    vkEndCommandBuffer(commandCopyBuffer);
-
-    // Execute the cmd buffer
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandCopyBuffer;
-    vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, NULL);
-
-    vkQueueWaitIdle(app->graphicsQueue);
+    endSingleBufferCommands(app, &commandCopyBuffer); 
     
     /*
      * Unlike the draw commands, there are no events we
@@ -1443,6 +1465,66 @@ void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevi
      * instead of executing one at a time.
      * That may give the driver more opportunities to optimize.
      */
+}
+
+void transitionImageLayout(vk_Struct_t* app, const VkImage* image, VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands(app);
+
+    /*
+     * One of the most common ways to perform layout transitions
+     * is using an image memory barrier. A pipeline barrier like
+     * that is generally used to synchronize access to resources,
+     * like ensuring that a write to a buffer completes before
+     * reading from it, but it can also be used to transition
+     * image layouts and transfer queue family ownership when
+     * VK_SHARING_MODE_EXCLUSIVE is used. There is an equivalent
+     * buffer memory barrier to do this for buffers.
+     */
+
+    VkImageMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    /*
+     * It is possible to use VK_IMAGE_LAYOUT_UNDEFINED as oldLayout
+     * if you don’t care about the existing contents of the image
+     */
+    barrier.image = *image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = (VkAccessFlags)0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        printf("unsupported layout transition\n");
+        exit(26);
+    }
+
+    vkCmdPipelineBarrier(commandBuffer,
+                         sourceStage,
+                         destinationStage,
+                         (VkDependencyFlags)0,
+                         0, NULL, // VkMemoryBarrier
+                         0, NULL, // VkBufferMemoryBarrier
+                         1, &barrier);
+    endSingleBufferCommands(app, &commandBuffer);
 }
 
 void createVertexBuffer(vk_Struct_t* app)
@@ -1728,6 +1810,174 @@ void setupDebugMessenger(vk_Struct_t* app)
     myvkCreateDebugUtilsMessengerEXT(app->instance, &debugUtilsMessageTypeFlags, NULL, &app->debugMessenger);
 }
 
+void createImage(vk_Struct_t* app,
+                 uint32_t width,
+                 uint32_t height,
+                 VkFormat format,
+                 VkImageTiling tiling,
+                 VkImageUsageFlags usage,
+                 VkMemoryPropertyFlags properties,
+                 VkImage* image,
+                 VkDeviceMemory* imageMemory)
+{
+    VkImageCreateInfo imageInfo = {};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    /*
+     * The image type, specified in the imageType field,
+     * tells Vulkan with what kind of coordinate system
+     * the texels in the image are going to be addressed.
+     * It is possible to create 1D, 2D and 3D images.
+     * One dimensional images can be used to store an
+     * array of data or gradient, two dimensional images
+     * are mainly used for textures, and three dimensional
+     * images can be used to store voxel volumes, for example.
+     * The extent field specifies the dimensions of the image,
+     * basically how many texels there are on each axis.
+     * That’s why depth must be 1 instead of 0. Our texture
+     * will not be an array and we won’t be using mipmapping for now.
+     */
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    /*
+     * The tiling field can have one of two values:
+     - VK_IMAGE_TILING_LINEAR: Texels are laid out in row-major order like our pixels array
+     - VK_IMAGE_TILING_OPTIMAL: Texels are laid out in an implementation defined order for optimal access
+
+      Unlike the layout of an image, the tiling mode cannot be changed at a later time.
+      If you want to be able to directly access texels in the memory of the image,
+      then you must use VK_IMAGE_TILING_LINEAR. We will be using a staging buffer
+      instead of a staging image, so this won’t be necessary. We will be using
+      VK_IMAGE_TILING_OPTIMAL for efficient access from the shader.
+     */
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.samples = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+
+    vkCreateImage(app->device, &imageInfo, NULL, image);
+
+    VkMemoryRequirements memRequirements = {};
+    vkGetImageMemoryRequirements(app->device, *image, &memRequirements);
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(app, memRequirements.memoryTypeBits, properties);
+    vkAllocateMemory(app->device, &allocInfo, NULL, imageMemory);
+    vkBindImageMemory(app->device, *image, *imageMemory, 0);
+}
+
+void copyBufferToImage(vk_Struct_t* app, const VkBuffer* buffer, VkImage* image, uint32_t width, uint32_t height)
+{
+    VkCommandBuffer commandBuffer = beginSingleTimeCommands(app);
+
+    VkBufferImageCopy region = {};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    /*
+     * The bufferRowLength and bufferImageHeight fields specify how the
+     * pixels are laid out in memory. For example, you could have some
+     * padding bytes between rows of the image. Specifying 0 for both
+     * indicates that the pixels are simply tightly packed like they
+     * are in our case
+     */
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageSubresource.layerCount = 1;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.mipLevel = 0;
+    region.imageOffset.x = 0;
+    region.imageOffset.y = 0;
+    region.imageOffset.z = 0;
+    region.imageExtent.width = width;
+    region.imageExtent.height = height;
+    region.imageExtent.depth = 1;
+
+    vkCmdCopyBufferToImage(commandBuffer, *buffer, *image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    /*
+     * The fourth parameter indicates which layout the image is currently using.
+     * I’m assuming here that the image has already been transitioned to the
+     * layout that is optimal for copying pixels to. Right now we’re only
+     * copying one chunk of pixels to the whole image, but it’s possible to
+     * specify an array of VkBufferImageCopy to perform many different copies
+     * from this buffer to the image in one operation.
+     */
+    endSingleBufferCommands(app, &commandBuffer);
+}
+
+void createTextureImage(vk_Struct_t* app)
+{
+    int texWidth, texHeight, texChannels;
+    stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
+    /*
+     * The STBI_rgb_alpha value forces the image to be loaded with
+     * an alpha channel, even if it doesn’t have one, which is
+     * nice for consistency with other textures in the future
+     * The pointer that is returned is the first element in an
+     * array of pixel values. The pixels are laid out row by
+     * row with 4 bytes per pixel in the case of STBI_rgb_alpha
+     * for a total of texWidth * texHeight * 4 values.
+     */
+
+    if(!pixels) {
+        printf("failed to load texture image\n");
+        exit(25);
+    }
+
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    VkBuffer stagingBuffer = {};
+    VkDeviceMemory stagingBufferMemory = {};
+
+    createBuffer(app,
+                 imageSize,
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &stagingBuffer,
+                 &stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(app->device, stagingBufferMemory, 0, imageSize, (VkMemoryMapFlags)0, &data);
+    memcpy(data, pixels, imageSize);
+    vkUnmapMemory(app->device, stagingBufferMemory);
+
+    stbi_image_free(pixels);
+
+    /*
+     * Although we could set up the shader to access the pixel values in the buffer,
+     * it’s better to use image objects in Vulkan for this purpose. Image objects
+     * will make it easier and faster to retrieve colors by allowing us to use 2D
+     * coordinates, for one. Pixels within an image object are known as texels,
+     * and we’ll use that name from this point on
+     */
+
+    createImage(app,
+                texWidth,
+                texHeight,
+                VK_FORMAT_B8G8R8A8_SRGB,
+                VK_IMAGE_TILING_OPTIMAL,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                &app->textureImage,
+                &app->textureImageMemory);
+
+    /* NOTE: When i do this, maybe create a image struct that stores the layout that it have */
+    transitionImageLayout(app, &app->textureImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(app, &stagingBuffer, &app->textureImage, (uint32_t)texWidth, (uint32_t)texHeight);
+
+    /* To be able to start sampling from the texture image
+     * in the shader, we need one last transition to prepare
+     * it for shader access:
+     */
+    transitionImageLayout(app, &app->textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 void initVulkan(vk_Struct_t* app)
 {
     app->window = create_window(app);
@@ -1768,6 +2018,8 @@ void initVulkan(vk_Struct_t* app)
     createFramebuffers(app);
 
     createCommandPool(app);
+
+    createTextureImage(app);
 
     createVertexBuffer(app);
     createIndexBuffer(app);

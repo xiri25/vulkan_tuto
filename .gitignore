@@ -4,3 +4,5 @@ hola.c
 Notas
 .cache/
 hola.cpp
+stb_lib/compile_commands.json
+stb_lib/cache/

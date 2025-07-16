@@ -1,3 +1,6 @@
 [submodule "cglmlib"]
 	path = cglmlib
 	url = https://github.com/recp/cglm.git
+[submodule "stb_lib"]
+	path = stb_lib
+	url = https://github.com/nothings/stb.git
