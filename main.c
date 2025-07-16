@@ -369,14 +369,6 @@ QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR sur
     return indices;
 }
 
-struct SwapChainSupportDetails {
-    VkSurfaceCapabilitiesKHR capabilities;
-    VkSurfaceFormatKHR* formats;
-    uint32_t formats_count;
-    VkPresentModeKHR* presentModes;
-    uint32_t presentModes_count;
-};
-
 struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
     struct SwapChainSupportDetails details = {};
     
