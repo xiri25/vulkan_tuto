@@ -2338,6 +2338,14 @@ void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
 
     float fovy = glm_rad(45.0f);
     float aspect_ratio = (float)app->swapChainExtent.width / (float)app->swapChainExtent.height;
+
+    /*
+     * This works just fine i think, though i dont know if i want to
+     * keep aspect_ratio without resizing the swapchain
+     * It have some problems, like if WIDTH << HEIGHT
+     * the quad does not fit
+     */
+    //float aspect_ratio = (float)app->WIDTH / (float)app->HEIGHT;
     float near_clipping_plane = 0.1f;
     float far_clipping_plane = 10.0f;
     glm_perspective(fovy, aspect_ratio, near_clipping_plane, far_clipping_plane, ubo.proj);
