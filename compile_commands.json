@@ -8,6 +8,7 @@
       "-O2",
       "-Icglmlib/include",
       "-Istb_lib",
+      "-Iglfw_lib/include",
       "-g",
       "-o",
       "vulkan",

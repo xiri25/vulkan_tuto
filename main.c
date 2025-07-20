@@ -19,6 +19,15 @@
 #include <stdalign.h>
 #include <unistd.h> // sleep()
 
+#define LOG 0
+#if LOG
+#define LOG_FUNCTION() \
+    printf("Function %s called in %s at line %d\n", __func__, __FILE__, __LINE__);
+#else
+#define LOG_FUNCTION()
+#endif
+
+
 struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     VkSurfaceFormatKHR* formats;
@@ -120,6 +129,7 @@ struct UniformBufferObject {
 // NOTE: I dont like this
 static VkVertexInputBindingDescription getBindingDescription()
 {
+    LOG_FUNCTION();
     /*
      * A vertex binding describes at which rate to load data from memory
      * throughout the vertices. It specifies the number of bytes between
@@ -148,6 +158,7 @@ static VkVertexInputBindingDescription getBindingDescription()
 
 static VkVertexInputAttributeDescription* getAttributeDescriptions()
 {
+    LOG_FUNCTION();
     VkVertexInputAttributeDescription* result = malloc(sizeof(VkVertexInputAttributeDescription) * 3); // FIXME: Need to be free()'d
     result[0].location = 0;
     result[0].binding = 0;
@@ -169,12 +180,14 @@ static VkVertexInputAttributeDescription* getAttributeDescriptions()
 
 static uint32_t getAttributeDescriptions_size()
 {
+    LOG_FUNCTION();
     // FIXME: xd
     return 3;
 }
 
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 {
+    LOG_FUNCTION();
     vk_Struct_t* app = (vk_Struct_t*)(glfwGetWindowUserPointer(window)); // XDDDDDDD
     
     app->WIDTH = width;
@@ -186,6 +199,7 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 
 GLFWwindow* create_window(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     const uint32_t width = app->WIDTH;
     const uint32_t height = app->HEIGHT;
 
@@ -205,6 +219,7 @@ GLFWwindow* create_window(vk_Struct_t* app)
 /* La he tenido que traducir de cpp porque usaba for loops fancy XD, puede estar mal */
 bool checkValidationLayerSupport(const char** validationLayers, const uint32_t validationLayers_count)
 {
+    LOG_FUNCTION();
     uint32_t layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, NULL);
 
@@ -241,6 +256,7 @@ bool checkValidationLayerSupport(const char** validationLayers, const uint32_t v
 
 void create_VkInstance(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     if(app->enableValidationLayers && !checkValidationLayerSupport(app->validationLayers, app->validationLayers_count))
     {
         printf("validation layers requested, but not available\n");
@@ -266,7 +282,7 @@ void create_VkInstance(vk_Struct_t* app)
     if (!glfwExtensions) {
         printf("GLFW failed to get required Vulkan extensions!\n");
         for (uint32_t i = 0; i < glfwExtensionCount; i++) {
-            printf("glfw_extension: %s\n", glfwExtensions[i]);
+            //printf("glfw_extension: %s\n", glfwExtensions[i]);
         }
         exit(1);
     }
@@ -280,7 +296,7 @@ void create_VkInstance(vk_Struct_t* app)
     Extensions[glfwExtensionCount] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 
     for (uint32_t i = 0; i < (glfwExtensionCount + 1); i++) {
-        printf("glfw_extension: %s\n", Extensions[i]);
+        //printf("glfw_extension: %s\n", Extensions[i]);
     }
 
     createInfo.enabledExtensionCount = glfwExtensionCount + 1;
@@ -302,6 +318,7 @@ void create_VkInstance(vk_Struct_t* app)
 
 void createSurface(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     if ( glfwCreateWindowSurface(app->instance, app->window, NULL, &app->surface) != VK_SUCCESS )
     {
         printf("Failed to create window surface\n");
@@ -316,6 +333,7 @@ typedef struct QueueFamilyIndices {
 
 QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface)
 {
+    LOG_FUNCTION();
     /* 
      * There are different types of queues
      * that originate from different queue
@@ -369,7 +387,9 @@ QueueFamilyIndices_t findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR sur
     return indices;
 }
 
-struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
+struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface)
+{
+    LOG_FUNCTION();
     struct SwapChainSupportDetails details = {};
     
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
@@ -399,6 +419,7 @@ struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, Vk
 
 bool checkDeviceExtensionSupport(VkPhysicalDevice device, const char** deviceExtensions, const uint32_t deviceExtensionsCount)
 {
+    LOG_FUNCTION();
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount, NULL);
 
@@ -446,6 +467,7 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device, const char** deviceExt
 
 bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char** deviceExtensions, const uint32_t deviceExtensionsCount)
 {
+    LOG_FUNCTION();
     VkPhysicalDeviceProperties deviceProperties;
     VkPhysicalDeviceFeatures deviceFeatures;
     QueueFamilyIndices_t indices;
@@ -482,6 +504,7 @@ bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface, const char*
 
 void pickPhysicalDevice(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
     uint32_t deviceCount = 0;
@@ -513,6 +536,7 @@ void pickPhysicalDevice(vk_Struct_t* app)
 
 void createLogicalDevice(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkDevice device;
 
     QueueFamilyIndices_t indices = findQueueFamilies(app->physicalDevice, app->surface);
@@ -557,19 +581,25 @@ void createLogicalDevice(vk_Struct_t* app)
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const VkSurfaceFormatKHR* availableFormats, const uint32_t availableFormats_count)
 {
+    LOG_FUNCTION();
+    //printf("chooseSwapSurfaceFormat(), buscando format = %d, colorSpace = %d, availableFormats_count = %d\n", VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, availableFormats_count);
     for (uint32_t i = 0; i < availableFormats_count; i++)
     {
-        if (availableFormats->format == VK_FORMAT_B8G8R8A8_SRGB && availableFormats->colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        //printf("    availableFormats->format = %d, availableFormats->colorSpace = %d\n", availableFormats[i].format, availableFormats[i].colorSpace); // TODO: print enum name
+        if (availableFormats[i].format == VK_FORMAT_B8G8R8A8_SRGB && availableFormats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
         {
             return availableFormats[i];
         }
     }
 
     /* If not found the one we want, return the first */
+    printf("chooseSwapSurfaceFormat(), no se ha encontrado el formato deseado\n");
     return availableFormats[0];
 }
 
-VkPresentModeKHR chooseSwapPresentMode(const VkPresentModeKHR* availablePresentModes, const uint32_t availablePresentModes_count) {
+VkPresentModeKHR chooseSwapPresentMode(const VkPresentModeKHR* availablePresentModes, const uint32_t availablePresentModes_count)
+{
+    LOG_FUNCTION();
     /*
       The presentation mode is arguably the most important setting for the swap chain,
       because it represents the actual conditions for showing images to the screen.
@@ -612,6 +642,7 @@ VkPresentModeKHR chooseSwapPresentMode(const VkPresentModeKHR* availablePresentM
 
 double clamp_uint32_t(uint32_t d, uint32_t min, uint32_t max)
 {
+    LOG_FUNCTION();
     /* https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value */
     const double t = d < min ? min : d;
     return t > max ? max : t;
@@ -620,6 +651,7 @@ double clamp_uint32_t(uint32_t d, uint32_t min, uint32_t max)
 
 VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR* capabilities, GLFWwindow* window)
 {
+    LOG_FUNCTION();
     if (capabilities->currentExtent.width != UINT32_MAX) {
         return capabilities->currentExtent;
     } else {
@@ -640,6 +672,7 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR* capabilities, GLFWwi
 
 void createSwapChain(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     struct SwapChainSupportDetails swapChainSupport = querySwapChainSupport(app->physicalDevice, app->surface);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats, swapChainSupport.formats_count);
@@ -742,15 +775,18 @@ void createSwapChain(vk_Struct_t* app)
     createInfo.presentMode = presentMode;
     createInfo.clipped = VK_TRUE; /* Dont care about color of obscured pixels, best performance
                                     I think it is for when miminized or behind another window */
+    //createInfo.oldSwapchain = app->swapChain;
     createInfo.oldSwapchain = VK_NULL_HANDLE;
 
-    if (vkCreateSwapchainKHR(app->device, &createInfo, NULL, &app->swapChain) != VK_SUCCESS)
+    VkResult result = vkCreateSwapchainKHR(app->device, &createInfo, NULL, &app->swapChain);
+    // printf("vkCreateSwapchainKHR() = %d\n", result);
+    if (result != VK_SUCCESS)
     {
         printf("failed to create swap chain!\n");
         exit(8);
     }
 
-    app->swapChainImageFormat = surfaceFormat.format;
+    app->swapChainImageFormat = surfaceFormat.format; // TODO: Why is this after vkCreateSwapchainKHR();
 
     free(swapChainSupport.formats);
     free(swapChainSupport.presentModes);
@@ -758,6 +794,7 @@ void createSwapChain(vk_Struct_t* app)
 
 VkImageView createImageView(vk_Struct_t* app, VkImage* image, VkFormat format)
 {
+    LOG_FUNCTION();
     VkImageView imageView;
 
     VkImageViewCreateInfo createInfo = {};
@@ -786,6 +823,7 @@ VkImageView createImageView(vk_Struct_t* app, VkImage* image, VkFormat format)
 
 void createImageViews(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     for (size_t i = 0; i < app->imageCount; i++) {
         app->swapChainImageViews[i] = createImageView(app, &app->swapChainImages[i], app->swapChainImageFormat);
     }
@@ -793,6 +831,7 @@ void createImageViews(vk_Struct_t* app)
 
 void createRenderPass(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkAttachmentDescription colorAttachment = {};
     colorAttachment.format = app->swapChainImageFormat;
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -817,6 +856,7 @@ void createRenderPass(vk_Struct_t* app)
     colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    //colorAttachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // TODO: i just did this bc x11 fix, it doesnt even seem to fully work XD, and wayland does not like it
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentReference colorAttachmentRef = {};
@@ -851,7 +891,9 @@ void createRenderPass(vk_Struct_t* app)
     }
 }
 
-char* readFile(const char* filename, size_t* fileSize) {
+char* readFile(const char* filename, size_t* fileSize)
+{
+    LOG_FUNCTION();
     FILE* file = fopen(filename, "rb");
     if (!file) {
         printf("failed to open file %s\n", filename);
@@ -877,6 +919,7 @@ char* readFile(const char* filename, size_t* fileSize) {
 
 VkShaderModule createShaderModule(VkDevice device, const char* code, size_t size)
 {
+    LOG_FUNCTION();
     VkShaderModuleCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = size;
@@ -894,6 +937,7 @@ VkShaderModule createShaderModule(VkDevice device, const char* code, size_t size
 
 void createGraphicsPipeline(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     /*
      * The graphics pipeline in Vulkan is almost completely immutable,
      * so you must recreate the pipeline from scratch if you want to
@@ -1226,6 +1270,7 @@ void createGraphicsPipeline(vk_Struct_t* app)
 
 void createFramebuffers(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     for (size_t i = 0; i < app->imageCount; i++) {
         VkImageView attachments[] = {
             app->swapChainImageViews[i]
@@ -1250,6 +1295,7 @@ void createFramebuffers(vk_Struct_t* app)
 
 void createCommandPool(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     /*
      * Commands in Vulkan, like drawing operations and memory transfers, are not executed
      * directly using function calls. You have to record all of the operations you want
@@ -1276,6 +1322,7 @@ void createCommandPool(vk_Struct_t* app)
 
 void createCommandBuffer(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkCommandBufferAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = app->commandPool;
@@ -1291,6 +1338,7 @@ void createCommandBuffer(vk_Struct_t* app)
 
 void createSyncObjects(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkSemaphoreCreateInfo semaphoreInfo = {};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -1313,6 +1361,7 @@ void createSyncObjects(vk_Struct_t* app)
 
 uint32_t findMemoryType(vk_Struct_t* app, uint32_t typeFilter, VkMemoryPropertyFlags properties)
 {
+    LOG_FUNCTION();
     /*
      * Graphics cards can offer different types of memory to allocate from.
      * Each type of memory varies in terms of allowed operations and performance
@@ -1349,6 +1398,7 @@ void createBuffer(vk_Struct_t* app,
                   VkBuffer* buffer,
                   VkDeviceMemory* bufferMemory)
 {
+    LOG_FUNCTION();
     /*
      * Unlike the Vulkan objects we’ve been dealing
      * with so far, buffers do not automatically
@@ -1396,6 +1446,7 @@ void createBuffer(vk_Struct_t* app,
 
 VkCommandBuffer beginSingleTimeCommands(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkCommandBuffer commandBuffer = {};
 
     VkCommandBufferAllocateInfo allocInfo = {};
@@ -1417,6 +1468,7 @@ VkCommandBuffer beginSingleTimeCommands(vk_Struct_t* app)
 
 void endSingleBufferCommands(vk_Struct_t* app, VkCommandBuffer* commandBuffer)
 {
+    LOG_FUNCTION();
     vkEndCommandBuffer(*commandBuffer);
 
     // Execute the cmd buffer
@@ -1431,6 +1483,7 @@ void endSingleBufferCommands(vk_Struct_t* app, VkCommandBuffer* commandBuffer)
 
 void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
 {
+    LOG_FUNCTION();
     /*
      * Memory transfer operations are executed using command buffers,
      * just like drawing commands. Therefore we must first allocate
@@ -1468,6 +1521,7 @@ void copyBuffer(vk_Struct_t* app, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDevi
 
 void transitionImageLayout(vk_Struct_t* app, const VkImage* image, VkImageLayout oldLayout, VkImageLayout newLayout)
 {
+    LOG_FUNCTION();
     VkCommandBuffer commandBuffer = beginSingleTimeCommands(app);
 
     /*
@@ -1528,6 +1582,7 @@ void transitionImageLayout(vk_Struct_t* app, const VkImage* image, VkImageLayout
 
 void createVertexBuffer(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     /*
      * The vertex buffer we have right now works correctly,
      * but the memory type that allows us to access it from
@@ -1593,6 +1648,7 @@ void createVertexBuffer(vk_Struct_t* app)
 
 void createIndexBuffer(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkDeviceSize bufferSize = app->indexBuffer_size;
 
     VkBuffer stagingBuffer = {};
@@ -1619,6 +1675,7 @@ void createIndexBuffer(vk_Struct_t* app)
 
 void createDescriptorSetLayout(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkDescriptorSetLayoutBinding uboLayoutBinding = {};
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1666,6 +1723,7 @@ void createDescriptorSetLayout(vk_Struct_t* app)
 
 void createUniformBuffers(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     /*
      * uniformBuffers.clear();
      * uniformBuffersMemory.clear();
@@ -1707,6 +1765,7 @@ void createUniformBuffers(vk_Struct_t* app)
 
 void createDescriptorPool(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     VkDescriptorPoolSize poolSize_ubo = {};
     poolSize_ubo.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSize_ubo.descriptorCount = app->MAX_FRAMES_IN_FLIGHT;
@@ -1729,7 +1788,12 @@ void createDescriptorPool(vk_Struct_t* app)
 
 void createDescriptorSets(vk_Struct_t* app)
 {
-    VkDescriptorSetLayout layout[] = {app->descriptorSetLayout, app->descriptorSetLayout}; // Size is app->MAX_FRAMES_IN_FLIGHT;
+    LOG_FUNCTION();
+    //VkDescriptorSetLayout layout[] = {app->descriptorSetLayout, app->descriptorSetLayout};
+    VkDescriptorSetLayout layout[app->MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < app->MAX_FRAMES_IN_FLIGHT; i++) {
+        layout[i] = app->descriptorSetLayout;
+    }
     
     VkDescriptorSetAllocateInfo allocInfo = {};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1818,7 +1882,9 @@ void createDescriptorSets(vk_Struct_t* app)
     }
 }
 
-static const char* to_string(VkDebugUtilsMessageTypeFlagsEXT type) {
+static const char* to_string(VkDebugUtilsMessageTypeFlagsEXT type)
+{
+    LOG_FUNCTION();
     switch (type) {
         case VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT:     return "VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT";
         case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT:  return "VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT";
@@ -1827,7 +1893,9 @@ static const char* to_string(VkDebugUtilsMessageTypeFlagsEXT type) {
     }
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* hola) {
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* hola)
+{
+    LOG_FUNCTION();
     (void)hola;
     if (severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT || severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         printf("validation layer: %s, msg: %s\n", to_string(type), pCallbackData->pMessage);
@@ -1838,6 +1906,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityF
 
 void setupDebugMessenger(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     if (!app->enableValidationLayers) return;
 
     VkDebugUtilsMessageSeverityFlagsEXT severityFlags = (VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -1872,6 +1941,7 @@ void createImage(vk_Struct_t* app,
                  VkImage* image,
                  VkDeviceMemory* imageMemory)
 {
+    LOG_FUNCTION();
     VkImageCreateInfo imageInfo = {};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -1925,6 +1995,7 @@ void createImage(vk_Struct_t* app,
 
 void copyBufferToImage(vk_Struct_t* app, const VkBuffer* buffer, VkImage* image, uint32_t width, uint32_t height)
 {
+    LOG_FUNCTION();
     VkCommandBuffer commandBuffer = beginSingleTimeCommands(app);
 
     VkBufferImageCopy region = {};
@@ -1964,6 +2035,7 @@ void copyBufferToImage(vk_Struct_t* app, const VkBuffer* buffer, VkImage* image,
 
 void createTextureImage(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 
@@ -2032,11 +2104,13 @@ void createTextureImage(vk_Struct_t* app)
 
 void createTextureImageView(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     app->textureImageView = createImageView(app, &app->textureImage, VK_FORMAT_R8G8B8A8_SRGB);
 }
 
 void createTextureSampler(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     /*
      * It is possible for shaders to read texels directly from images,
      * but that is not very common when they are used as textures.
@@ -2113,6 +2187,7 @@ void createTextureSampler(vk_Struct_t* app)
 
 void initVulkan(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     app->window = create_window(app);
 
     create_VkInstance(app);
@@ -2189,6 +2264,7 @@ void initVulkan(vk_Struct_t* app)
 
 void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t currentFrame)
 {
+    LOG_FUNCTION();
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0; // Optional
@@ -2269,15 +2345,16 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
 
 void cleanupSwapChain(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
+    printf("cleanupSwapChain()\n");
     for (uint32_t i = 0; i < app->imageCount; i++) {
         app->swapChainImageViews[i] = NULL;
     }
-
-    app->swapChain = NULL;
 }
 
 void recreateSwapChain(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     int width = 0, height = 0;
     glfwGetFramebufferSize(app->window, &width, &height);
     while (width == 0 || height == 0) {
@@ -2301,7 +2378,9 @@ void recreateSwapChain(vk_Struct_t* app)
     createImageViews(app);
 }
 
-static double time_now_ms(void) {
+static double time_now_ms(void)
+{
+    LOG_FUNCTION();
     struct timespec current_time;
     clock_gettime(CLOCK_MONOTONIC_RAW, &current_time);
     double ms = (current_time.tv_sec + (current_time.tv_nsec / 1e9)) * 1000;
@@ -2320,6 +2399,7 @@ static void print_mat4(mat4 mat4)
 
 void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
 {
+    LOG_FUNCTION();
     // El currentFrame tambien lo puedo obtener de la clase, no se cual es mejor, por ahora asi
 
     static float time = 0;
@@ -2369,6 +2449,7 @@ void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
 
 void drawFrame(vk_Struct_t* app, double dt)
 {
+    LOG_FUNCTION();
     /*
      * At a high level, rendering a frame in Vulkan consists of a common set of steps:
         - Wait for the previous frame to finish
@@ -2385,6 +2466,7 @@ void drawFrame(vk_Struct_t* app, double dt)
     uint32_t imageIndex;
     VkResult result = vkAcquireNextImageKHR(app->device, app->swapChain, UINT64_MAX, app->imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        printf("vkAcquireNextImageKHR() = VK_ERROR_OUT_OF_DATE_KHR -> recreateSwapChain()\n");
         recreateSwapChain(app);
         return;
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
@@ -2436,6 +2518,17 @@ void drawFrame(vk_Struct_t* app, double dt)
     result = vkQueuePresentKHR(app->graphicsQueue, &presentInfo);
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         app->framebufferResized = false;
+        printf("vkQueuePresentKHR() = VK_ERROR_OUT_OF_DATE_KHR || VK_SUBOPTIMAL_KHR -> recreateSwapChain()\n");
+        switch (result) {
+            case VK_ERROR_OUT_OF_DATE_KHR:
+                printf("VK_ERROR_OUT_OF_DATE_KHR\n");
+                break;
+            case VK_SUBOPTIMAL_KHR:
+                printf("VK_SUBOPTIMAL_KHR\n");
+                break;
+            default:
+                printf("Another result\n");
+        }
         recreateSwapChain(app);
     } else if (result != VK_SUCCESS) {
         printf("failed to present swap chain image!\n");
@@ -2447,6 +2540,7 @@ void drawFrame(vk_Struct_t* app, double dt)
 
 void mainLoop(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     while (!glfwWindowShouldClose(app->window)) {
     
         double begin_frame = time_now_ms();
@@ -2463,6 +2557,7 @@ void mainLoop(vk_Struct_t* app)
 
 void cleanup(vk_Struct_t* app)
 {
+    LOG_FUNCTION();
     for (size_t i = 0; i < 2; i++) {
         vkDestroySemaphore(app->device, app->renderFinishedSemaphores[i], NULL);
         vkDestroySemaphore(app->device, app->imageAvailableSemaphores[i], NULL);
@@ -2502,6 +2597,7 @@ void cleanup(vk_Struct_t* app)
 
 int main(void)
 {
+    LOG_FUNCTION();
     // Time to renderdoc to hook in
     sleep(2);
 
@@ -2516,6 +2612,7 @@ int main(void)
         .WIDTH = 800,
         .HEIGHT = 600,
         .MAX_FRAMES_IN_FLIGHT = 2,
+        //.MAX_FRAMES_IN_FLIGHT = 3, // FIXME: x11 needs 3, i dont know whay, but it is the minimun of imageCount
         .validationLayers_count = 1,
         .validationLayers = malloc(sizeof(const char*) * 1),
 #ifdef NDEBUG
@@ -2577,6 +2674,8 @@ int main(void)
     }
 
     App.last_frame_time = 0;
+
+    App.swapChain = VK_NULL_HANDLE;
 
     initVulkan(&App);
 
