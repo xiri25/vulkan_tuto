@@ -7,3 +7,6 @@
 [submodule "glfw_lib"]
 	path = glfw_lib
 	url = https://github.com/glfw/glfw.git
+[submodule "tracy"]
+	path = tracy
+	url = https://github.com/wolfpld/tracy.git

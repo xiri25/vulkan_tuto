@@ -6,3 +6,5 @@ Notas
 hola.cpp
 stb_lib/compile_commands.json
 stb_lib/cache/
+*.o
+vulkan_tracy

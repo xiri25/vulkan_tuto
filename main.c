@@ -26,6 +26,21 @@
 #include <stdalign.h>
 #include <unistd.h> // sleep()
 
+#if PROFILE_WITH_TRACY
+#define TRACY_ENABLE
+#include "tracy/public/tracy/TracyC.h"
+#else
+#define TracyCZone(c,x)
+#define TracyCZoneN(c,x,y)
+#define TracyCZoneC(c,x,y)
+#define TracyCZoneNC(c,x,y,z)
+#define TracyCZoneEnd(c)
+#define TracyCZoneText(c,x,y)
+#define TracyCZoneName(c,x,y)
+#define TracyCZoneColor(c,x)
+#define TracyCZoneValue(c,x)
+#endif
+
 #define LOG 0
 #if LOG
 #define LOG_FUNCTION() \
@@ -2355,6 +2370,7 @@ void createDepthResources(vk_Struct_t* app)
 
 void initVulkan(vk_Struct_t* app)
 {
+    TracyCZone(initVulkan, true);
     LOG_FUNCTION();
     app->window = create_window(app);
 
@@ -2430,17 +2446,22 @@ void initVulkan(vk_Struct_t* app)
         exit(1);
     }
     createSyncObjects(app);
+    TracyCZoneEnd(initVulkan);
 }
 
 void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t currentFrame)
 {
+    TracyCZone(recordCommandBuffer, true);
     LOG_FUNCTION();
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0; // Optional
     beginInfo.pInheritanceInfo = NULL; // Optional
 
-    if (vkBeginCommandBuffer(app->commandBuffers[currentFrame], &beginInfo) != VK_SUCCESS)
+    TracyCZoneN(recordCommandBuffer_vkBeginCommandBuffer, "vkBeginCommandBuffer", true);
+    VkResult result_vkBeginCommandBuffer = vkBeginCommandBuffer(app->commandBuffers[currentFrame], &beginInfo);
+    TracyCZoneEnd(recordCommandBuffer_vkBeginCommandBuffer);
+    if (result_vkBeginCommandBuffer != VK_SUCCESS)
     {
         printf("failed to begin recording command buffer!\n");
         exit(19);
@@ -2466,8 +2487,13 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
      * of clearValues should be identical to the order of your attachments.
      */
 
+    TracyCZoneN(recordCommandBuffer_vkCmdBeginRenderPass, "vkCmdBeginRenderPass", true);
     vkCmdBeginRenderPass(app->commandBuffers[currentFrame], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBeginRenderPass);
+
+    TracyCZoneN(recordCommandBuffer_vkCmdBindPipeline, "vkCmdBindPipeline", true);
     vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBindPipeline);
 
     VkViewport viewport = {};
     viewport.x = 0.0f;
@@ -2476,18 +2502,31 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
     viewport.height = (float)(app->swapChainExtent.height);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
+    TracyCZoneN(recordCommandBuffer_vkCmdSetViewport, "vkCmdSetViewport", true);
     vkCmdSetViewport(app->commandBuffers[currentFrame], 0, 1, &viewport);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdSetViewport);
 
     VkRect2D scissor = {};
     scissor.offset.x = 0;
     scissor.offset.y = 0;
     scissor.extent = app->swapChainExtent;
+    TracyCZoneN(recordCommandBuffer_vkCmdSetScissor, "vkCmdSetScissor", true);
     vkCmdSetScissor(app->commandBuffers[currentFrame], 0, 1, &scissor);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdSetScissor);
 
-    vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline);
+    TracyCZoneN(recordCommandBuffer_vkCmdBindPipeline2, "vkCmdBindPipeline", true);
+    vkCmdBindPipeline(app->commandBuffers[currentFrame], VK_PIPELINE_BIND_POINT_GRAPHICS, app->graphicsPipeline); // FIXME: 2 VECES????
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBindPipeline2);
 
+    TracyCZoneN(recordCommandBuffer_vkCmdBindVertexBuffers, "vkCmdBindVertexBuffers", true);
     vkCmdBindVertexBuffers(app->commandBuffers[currentFrame], 0, 1, &app->vertexBuffer, (VkDeviceSize[]) {0});
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBindVertexBuffers);
+
+    TracyCZoneN(recordCommandBuffer_vkCmdBindIndexBuffer, "vkCmdBindIndexBuffer", true);
     vkCmdBindIndexBuffer(app->commandBuffers[currentFrame], app->indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBindIndexBuffer);
+
+    TracyCZoneN(recordCommandBuffer_vkCmdBindDescriptorSets, "vkCmdBindDescriptorSets", true);
     vkCmdBindDescriptorSets(app->commandBuffers[currentFrame],
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
                             app->pipelineLayout,
@@ -2496,6 +2535,7 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
                             &app->descriptorSets[currentFrame],
                             0,
                             NULL);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdBindDescriptorSets);
     /*
      * Unlike vertex and index buffers, descriptor sets are not unique to graphics pipelines.
      * Therefore, we need to specify if we want to bind descriptor sets to the graphics
@@ -2507,18 +2547,24 @@ void recordCommandBuffer(vk_Struct_t* app, uint32_t imageIndex, uint32_t current
      */
 
     //vkCmdDraw(app->commandBuffers[currentFrame], 3, 1, 0, 0);
+    TracyCZoneN(recordCommandBuffer_vkCmdDrawIndexed, "vkCmdDrawIndexed", true);
     vkCmdDrawIndexed(app->commandBuffers[currentFrame],
                      (app->indexBuffer_size / sizeof(uint16_t)),
                      1, // We are not using instancing
                      0, 0, 0);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdDrawIndexed);
 
+    TracyCZoneN(recordCommandBuffer_vkCmdEndRenderPass, "vkCmdEndRenderPass", true);
     vkCmdEndRenderPass(app->commandBuffers[currentFrame]);
+    TracyCZoneEnd(recordCommandBuffer_vkCmdEndRenderPass);
 
-    if (vkEndCommandBuffer(app->commandBuffers[currentFrame]) != VK_SUCCESS)
+    VkResult result_vkEndCommandBuffer = vkEndCommandBuffer(app->commandBuffers[currentFrame]) ;
+    if (result_vkEndCommandBuffer != VK_SUCCESS)
     {
         printf("failed to record command buffer!\n");
         exit(20);
     }
+    TracyCZoneEnd(recordCommandBuffer);
 }
 
 void cleanupSwapChain(vk_Struct_t* app)
@@ -2561,10 +2607,12 @@ void recreateSwapChain(vk_Struct_t* app)
 
 static double time_now_ms(void)
 {
+    TracyCZone(time_now_ms, true);
     LOG_FUNCTION();
     struct timespec current_time;
     clock_gettime(CLOCK_MONOTONIC_RAW, &current_time);
     double ms = (current_time.tv_sec + (current_time.tv_nsec / 1e9)) * 1000;
+    TracyCZoneEnd(time_now_ms);
     return ms;
 }
 
@@ -2580,6 +2628,7 @@ static void print_mat4(mat4 mat4)
 
 void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
 {
+    TracyCZone(updateUniformBuffer, true);
     LOG_FUNCTION();
     // El currentFrame tambien lo puedo obtener de la clase, no se cual es mejor, por ahora asi
 
@@ -2626,10 +2675,12 @@ void updateUniformBuffer(vk_Struct_t* app, uint32_t currentFrame, double dt)
      * to the shader. A more efficient way to pass a small buffer of data to shaders is
      * push constants. We may look at these in a future chapter.
      */
+    TracyCZoneEnd(updateUniformBuffer);
 }
 
 void drawFrame(vk_Struct_t* app, double dt)
 {
+    TracyCZone(drawFrame, true);
     LOG_FUNCTION();
     /*
      * At a high level, rendering a frame in Vulkan consists of a common set of steps:
@@ -2642,10 +2693,14 @@ void drawFrame(vk_Struct_t* app, double dt)
 
     uint32_t currentFrame = app->currentFrame;
 
+    TracyCZoneN(drawFrame_vkWaitForFences, "vkWaitForFences", true);
     vkWaitForFences(app->device, 1, &app->inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    TracyCZoneEnd(drawFrame_vkWaitForFences);
 
     uint32_t imageIndex;
+    TracyCZoneN(drawFrame_vkAcquireNextImageKHR, "vkAcquireNextImageKHR", true);
     VkResult result = vkAcquireNextImageKHR(app->device, app->swapChain, UINT64_MAX, app->imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+    TracyCZoneEnd(drawFrame_vkAcquireNextImageKHR);
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         printf("vkAcquireNextImageKHR() = VK_ERROR_OUT_OF_DATE_KHR -> recreateSwapChain()\n");
         recreateSwapChain(app);
@@ -2654,11 +2709,16 @@ void drawFrame(vk_Struct_t* app, double dt)
         printf("failed to acquire swap chain image!");
         exit(23);
     }
-     
+    
+    TracyCZoneN(drawFrame_vkResetFences, "vkResetFences", true);
     /* Only reset the fence if we are submitting work */
     vkResetFences(app->device, 1, &app->inFlightFences[currentFrame]);
+    TracyCZoneEnd(drawFrame_vkResetFences);
 
+    TracyCZoneN(drawFrame_vkResetCommandBuffer, "vkResetCommandBuffer", true);
     vkResetCommandBuffer(app->commandBuffers[currentFrame], 0);
+    TracyCZoneEnd(drawFrame_vkResetCommandBuffer);
+
     recordCommandBuffer(app, imageIndex, currentFrame);
 
     updateUniformBuffer(app, currentFrame, dt); // Realmente el currentFrame esta en la clase
@@ -2679,7 +2739,10 @@ void drawFrame(vk_Struct_t* app, double dt)
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, app->inFlightFences[currentFrame]) != VK_SUCCESS)
+    TracyCZoneN(drawFrame_vkQueueSubmit, "vkQueueSubmit", true);
+    VkResult result_vkQueueSubmit = vkQueueSubmit(app->graphicsQueue, 1, &submitInfo, app->inFlightFences[currentFrame]);
+    TracyCZoneEnd(drawFrame_vkQueueSubmit);
+    if (result_vkQueueSubmit != VK_SUCCESS)
     {
         printf("failed to submit draw command buffer!\n");
         exit(22);
@@ -2696,7 +2759,9 @@ void drawFrame(vk_Struct_t* app, double dt)
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL; // Optional
 
+    TracyCZoneN(drawFrame_vkQueuePresentKHR, "vkQueuePresentKHR", true);
     result = vkQueuePresentKHR(app->graphicsQueue, &presentInfo);
+    TracyCZoneEnd(drawFrame_vkQueuePresentKHR);
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
         app->framebufferResized = false;
         printf("vkQueuePresentKHR() = VK_ERROR_OUT_OF_DATE_KHR || VK_SUBOPTIMAL_KHR -> recreateSwapChain()\n");
@@ -2717,12 +2782,15 @@ void drawFrame(vk_Struct_t* app, double dt)
     }
 
     app->currentFrame = (currentFrame + 1) % app->MAX_FRAMES_IN_FLIGHT;
+    TracyCZoneEnd(drawFrame);
 }
 
 void mainLoop(vk_Struct_t* app)
 {
+    TracyCZone(mainLoop, true);
     LOG_FUNCTION();
     while (!glfwWindowShouldClose(app->window)) {
+        TracyCZoneN(mainLoop_iteration, "mainLoop_iteration", true);
     
         double begin_frame = time_now_ms();
 
@@ -2731,9 +2799,11 @@ void mainLoop(vk_Struct_t* app)
     
         double end_frame = time_now_ms();
         app->last_frame_time = end_frame - begin_frame;
+        TracyCZoneEnd(mainLoop_iteration);
     }
 
     vkDeviceWaitIdle(app->device);
+    TracyCZoneEnd(mainLoop);
 }
 
 void cleanup(vk_Struct_t* app)
@@ -2778,6 +2848,7 @@ void cleanup(vk_Struct_t* app)
 
 int main(void)
 {
+    TracyCZone(main, true);
     LOG_FUNCTION();
     // Time to renderdoc to hook in
     sleep(2);
@@ -2876,6 +2947,8 @@ int main(void)
     mainLoop(&App);
 
     cleanup(&App);
+
+    TracyCZoneEnd(main);
 
     return 0;
 }
